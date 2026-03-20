@@ -25,6 +25,17 @@ import { registerTransformTools } from './tools/transformTools.js';
 import { registerCreateMaterialTool, registerAssignMaterialTool, registerModifyMaterialTool, registerGetMaterialInfoTool } from './tools/materialTools.js';
 import { registerDuplicateGameObjectTool, registerDeleteGameObjectTool, registerReparentGameObjectTool } from './tools/gameObjectTools.js';
 import { registerBatchExecuteTool } from './tools/batchExecuteTool.js';
+import { registerPlayModeControlTool } from './tools/playModeControlTool.js';
+import { registerFindObjectsTool } from './tools/findObjectsTool.js';
+import { registerInspectObjectTool } from './tools/inspectObjectTool.js';
+import { registerCaptureScreenshotTool } from './tools/captureScreenshotTool.js';
+import { registerSimulateInputTool } from './tools/simulateInputTool.js';
+import { registerCallMethodTool } from './tools/callMethodTool.js';
+import { registerSetTextTool } from './tools/setTextTool.js';
+import { registerPlayerPrefsTool } from './tools/playerPrefsTool.js';
+import { registerTimeControlTool } from './tools/timeControlTool.js';
+import { registerScreenInfoTool } from './tools/screenInfoTool.js';
+import { registerWaitForTool } from './tools/waitForTool.js';
 import { registerGetMenuItemsResource } from './resources/getMenuItemResource.js';
 import { registerGetConsoleLogsResource } from './resources/getConsoleLogsResource.js';
 import { registerGetHierarchyResource } from './resources/getScenesHierarchyResource.js';
@@ -87,6 +98,19 @@ registerCreateMaterialTool(server, mcpUnity, toolLogger);
 registerAssignMaterialTool(server, mcpUnity, toolLogger);
 registerModifyMaterialTool(server, mcpUnity, toolLogger);
 registerGetMaterialInfoTool(server, mcpUnity, toolLogger);
+
+// Register AltTester-replacement tools
+registerPlayModeControlTool(server, mcpUnity, toolLogger);
+registerFindObjectsTool(server, mcpUnity, toolLogger);
+registerInspectObjectTool(server, mcpUnity, toolLogger);
+registerCaptureScreenshotTool(server, mcpUnity, toolLogger);
+registerSimulateInputTool(server, mcpUnity, toolLogger);
+registerCallMethodTool(server, mcpUnity, toolLogger);
+registerSetTextTool(server, mcpUnity, toolLogger);
+registerPlayerPrefsTool(server, mcpUnity, toolLogger);
+registerTimeControlTool(server, mcpUnity, toolLogger);
+registerScreenInfoTool(server, mcpUnity, toolLogger);
+registerWaitForTool(server, mcpUnity, toolLogger);
 
 // Register Batch Execute Tool (high-priority for performance)
 registerBatchExecuteTool(server, mcpUnity, toolLogger);

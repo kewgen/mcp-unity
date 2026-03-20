@@ -88,6 +88,11 @@ namespace McpUnity.Unity
         public bool IsListening => _webSocketServer?.IsListening ?? false;
 
         /// <summary>
+        /// Whether Unity is currently in Play Mode
+        /// </summary>
+        public static bool IsInPlayMode => EditorApplication.isPlaying;
+
+        /// <summary>
         /// Thread-safe dictionary of connected clients with this server.
         /// WebSocketSharp dispatches OnOpen/OnClose on thread pool threads,
         /// so concurrent access must be safe.
@@ -414,6 +419,40 @@ namespace McpUnity.Unity
             GetMaterialInfoTool getMaterialInfoTool = new GetMaterialInfoTool();
             _tools.Add(getMaterialInfoTool.Name, getMaterialInfoTool);
 
+            // Register AltTester-replacement tools
+            PlayModeControlTool playModeControlTool = new PlayModeControlTool();
+            _tools.Add(playModeControlTool.Name, playModeControlTool);
+
+            FindObjectsTool findObjectsTool = new FindObjectsTool();
+            _tools.Add(findObjectsTool.Name, findObjectsTool);
+
+            InspectObjectTool inspectObjectTool = new InspectObjectTool();
+            _tools.Add(inspectObjectTool.Name, inspectObjectTool);
+
+            CaptureScreenshotTool captureScreenshotTool = new CaptureScreenshotTool();
+            _tools.Add(captureScreenshotTool.Name, captureScreenshotTool);
+
+            SimulateInputTool simulateInputTool = new SimulateInputTool();
+            _tools.Add(simulateInputTool.Name, simulateInputTool);
+
+            CallMethodTool callMethodTool = new CallMethodTool();
+            _tools.Add(callMethodTool.Name, callMethodTool);
+
+            SetTextTool setTextTool = new SetTextTool();
+            _tools.Add(setTextTool.Name, setTextTool);
+
+            PlayerPrefsTool playerPrefsTool = new PlayerPrefsTool();
+            _tools.Add(playerPrefsTool.Name, playerPrefsTool);
+
+            TimeControlTool timeControlTool = new TimeControlTool();
+            _tools.Add(timeControlTool.Name, timeControlTool);
+
+            ScreenInfoTool screenInfoTool = new ScreenInfoTool();
+            _tools.Add(screenInfoTool.Name, screenInfoTool);
+
+            CheckConditionTool checkConditionTool = new CheckConditionTool();
+            _tools.Add(checkConditionTool.Name, checkConditionTool);
+
             // Register BatchExecuteTool (must be registered last as it needs access to other tools)
             BatchExecuteTool batchExecuteTool = new BatchExecuteTool(this);
             _tools.Add(batchExecuteTool.Name, batchExecuteTool);
@@ -513,22 +552,27 @@ namespace McpUnity.Unity
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
             if (Application.isBatchMode || _instance == null) return;
-            
+
             switch (state)
             {
                 case PlayModeStateChange.ExitingEditMode:
-                    // About to enter Play Mode - use custom close code so clients use fast polling
-                    if (_instance.IsListening)
-                    {
-                        _instance.StopServer(UnityCloseCode.PlayMode, "Unity entering Play mode");
-                    }
+                    // Keep server running during Play Mode transition for AltTester-like functionality.
+                    // Domain reload will handle restart via AfterReload/OnAfterAssemblyReload.
+                    McpLogger.LogInfo("Play Mode transition: ExitingEditMode. Server stays active.");
                     break;
                 case PlayModeStateChange.EnteredPlayMode:
+                    // After domain reload in Play Mode, ensure server is running
+                    if (!_instance.IsListening && McpUnitySettings.Instance.AutoStartServer)
+                    {
+                        McpLogger.LogInfo("Play Mode: restarting server after domain reload.");
+                        _instance.StartServer();
+                    }
+                    break;
                 case PlayModeStateChange.ExitingPlayMode:
-                    // Server is disabled during play mode as domain reload will be triggered again when stopped.
+                    McpLogger.LogInfo("Play Mode transition: ExitingPlayMode. Server stays active.");
                     break;
                 case PlayModeStateChange.EnteredEditMode:
-                    // Returned to Edit Mode
+                    // Returned to Edit Mode — ensure server is running
                     if (!_instance.IsListening && McpUnitySettings.Instance.AutoStartServer)
                     {
                         _instance.StartServer();
