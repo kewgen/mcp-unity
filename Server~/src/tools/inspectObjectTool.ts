@@ -4,6 +4,7 @@ import { McpUnityError, ErrorType } from '../utils/errors.js';
 import * as z from 'zod';
 import { Logger } from '../utils/logger.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { sendWithRetry } from './toolHelper.js';
 
 const toolName = 'inspect_object';
 const toolDescription = 'Inspects a GameObject for screen position, world position, bounds, text content, and parent info. Use query parameter to select specific data.';
@@ -27,10 +28,7 @@ export function registerInspectObjectTool(server: McpServer, mcpUnity: McpUnity,
     async (params: z.infer<typeof paramsSchema>): Promise<CallToolResult> => {
       try {
         logger.info(`Executing tool: ${toolName}`, params);
-        const response = await mcpUnity.sendRequest({
-          method: toolName,
-          params
-        });
+        const response = await sendWithRetry(mcpUnity, toolName, params, logger);
 
         if (!response.success) {
           throw new McpUnityError(

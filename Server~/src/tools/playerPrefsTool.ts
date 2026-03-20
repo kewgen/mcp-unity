@@ -4,6 +4,7 @@ import { McpUnityError, ErrorType } from '../utils/errors.js';
 import * as z from 'zod';
 import { Logger } from '../utils/logger.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { sendWithRetry } from './toolHelper.js';
 
 const toolName = 'player_prefs';
 const toolDescription = 'Manages Unity PlayerPrefs: get, set, delete, check existence, or delete all.';
@@ -22,7 +23,7 @@ export function registerPlayerPrefsTool(server: McpServer, mcpUnity: McpUnity, l
     async (params: z.infer<typeof paramsSchema>): Promise<CallToolResult> => {
       try {
         logger.info(`Executing tool: ${toolName}`, params);
-        const response = await mcpUnity.sendRequest({ method: toolName, params });
+        const response = await sendWithRetry(mcpUnity, toolName, params, logger);
         if (!response.success) {
           throw new McpUnityError(ErrorType.TOOL_EXECUTION, response.message || 'Failed to access PlayerPrefs');
         }
