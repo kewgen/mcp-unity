@@ -138,8 +138,10 @@ async function startServer() {
 
     serverLogger.info('MCP Server started');
     
-    // Get the client name from the MCP server
-    const clientName = server.server.getClientVersion()?.name || 'Unknown MCP Client';
+    // Get the client name from the MCP server, env var, or fallback
+    const clientName = server.server.getClientVersion()?.name
+      || process.env.MCP_CLIENT_NAME
+      || 'Unknown MCP Client';
     serverLogger.info(`Connected MCP client: ${clientName}`);
     
     // Start Unity Bridge connection with client name in headers
