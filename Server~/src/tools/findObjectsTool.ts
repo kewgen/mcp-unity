@@ -4,6 +4,7 @@ import { McpUnityError, ErrorType } from '../utils/errors.js';
 import * as z from 'zod';
 import { Logger } from '../utils/logger.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { sendWithRetry } from './toolHelper.js';
 
 const toolName = 'find_objects';
 const toolDescription = 'Finds GameObjects by tag, layer, component type, text content, partial name match, or screen coordinates. Returns matching objects with their paths, components, and properties.';
@@ -41,10 +42,7 @@ export function registerFindObjectsTool(server: McpServer, mcpUnity: McpUnity, l
     async (params: z.infer<typeof paramsSchema>): Promise<CallToolResult> => {
       try {
         logger.info(`Executing tool: ${toolName}`, params);
-        const response = await mcpUnity.sendRequest({
-          method: toolName,
-          params
-        });
+        const response = await sendWithRetry(mcpUnity, toolName, params, logger);
 
         if (!response.success) {
           throw new McpUnityError(

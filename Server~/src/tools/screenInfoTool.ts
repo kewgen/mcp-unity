@@ -4,6 +4,7 @@ import { McpUnityError, ErrorType } from '../utils/errors.js';
 import * as z from 'zod';
 import { Logger } from '../utils/logger.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { sendWithRetry } from './toolHelper.js';
 
 const toolName = 'screen_info';
 const toolDescription = 'Gets screen size or converts coordinates between screen space and world space.';
@@ -23,7 +24,7 @@ export function registerScreenInfoTool(server: McpServer, mcpUnity: McpUnity, lo
     async (params: z.infer<typeof paramsSchema>): Promise<CallToolResult> => {
       try {
         logger.info(`Executing tool: ${toolName}`, params);
-        const response = await mcpUnity.sendRequest({ method: toolName, params });
+        const response = await sendWithRetry(mcpUnity, toolName, params, logger);
         if (!response.success) {
           throw new McpUnityError(ErrorType.TOOL_EXECUTION, response.message || 'Failed to get screen info');
         }

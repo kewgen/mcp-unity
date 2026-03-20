@@ -4,6 +4,7 @@ import { McpUnityError, ErrorType } from '../utils/errors.js';
 import * as z from 'zod';
 import { Logger } from '../utils/logger.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { sendWithRetry } from './toolHelper.js';
 
 const toolName = 'simulate_input';
 const toolDescription = 'Simulates user input in Play Mode: click/tap on objects or coordinates, swipe, key press, mouse move, scroll, pointer events. Requires Play Mode.';
@@ -36,10 +37,7 @@ export function registerSimulateInputTool(server: McpServer, mcpUnity: McpUnity,
     async (params: z.infer<typeof paramsSchema>): Promise<CallToolResult> => {
       try {
         logger.info(`Executing tool: ${toolName}`, params);
-        const response = await mcpUnity.sendRequest({
-          method: toolName,
-          params
-        });
+        const response = await sendWithRetry(mcpUnity, toolName, params, logger);
 
         if (!response.success) {
           throw new McpUnityError(
