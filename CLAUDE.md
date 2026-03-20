@@ -100,6 +100,7 @@ Same pattern as tools:
 
 **Environment variables** (Node side):
 - `UNITY_HOST`: Override Unity host (for remote connections)
+- `MCP_CLIENT_NAME`: Client name shown in Unity logs (fallback if MCP SDK doesn't provide one). Set in `.mcp.json` → `env` to identify which agent/chat is connected.
 - `LOGGING=true`: Enable console logging
 - `LOGGING_FILE=true`: Write logs to log.txt
 
@@ -162,6 +163,20 @@ All runtime tools use `sendWithRetry()` (`Server~/src/tools/toolHelper.ts`) whic
 ### Multi-Agent / Parallel Usage
 
 The MCP Unity server supports multiple concurrent MCP client connections (multi-client WebSocket). Important considerations for parallel agent workflows:
+
+**Client identification:**
+Each MCP client is identified in Unity logs by name. Set `MCP_CLIENT_NAME` in `.mcp.json` env to distinguish agents:
+```json
+{
+  "mcpServers": {
+    "mcp-unity": {
+      "env": { "MCP_CLIENT_NAME": "Agent-Render" }
+    }
+  }
+}
+```
+Priority: MCP SDK `clientInfo.name` → `MCP_CLIENT_NAME` env var → `"Unknown MCP Client"`.
+When running multiple agents, give each a unique name to trace which agent issued which command in Unity console.
 
 **What works in parallel:**
 - Multiple agents can read scene state simultaneously (`get_scene_info`, `find_objects`, `inspect_object`, `get_gameobject`, etc.)
