@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using Newtonsoft.Json.Linq;
 using McpUnity.Unity;
@@ -42,6 +43,8 @@ namespace McpUnity.Tools
                             tcs.SetResult(CreateStateResponse("Already in Play Mode"));
                             return;
                         }
+                        // Auto-save dirty scenes to prevent the "Save Scene" dialog from blocking
+                        EditorSceneManager.SaveOpenScenes();
                         EditorCoroutineUtility.StartCoroutineOwnerless(
                             WaitForPlayModeChange(true, tcs));
                         EditorApplication.isPlaying = true;
