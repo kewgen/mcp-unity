@@ -121,6 +121,11 @@ namespace McpUnity.Unity
         }
 
         /// <summary>
+        /// Whether Unity is currently in Play Mode
+        /// </summary>
+        public static bool IsInPlayMode => EditorApplication.isPlaying;
+
+        /// <summary>
         /// Thread-safe dictionary of connected clients with this server.
         /// WebSocketSharp dispatches OnOpen/OnClose on thread pool threads,
         /// so concurrent access must be safe.
@@ -881,6 +886,40 @@ namespace McpUnity.Unity
             GetMaterialInfoTool getMaterialInfoTool = new GetMaterialInfoTool();
             _tools.Add(getMaterialInfoTool.Name, getMaterialInfoTool);
 
+            // Register AltTester-replacement tools
+            PlayModeControlTool playModeControlTool = new PlayModeControlTool();
+            _tools.Add(playModeControlTool.Name, playModeControlTool);
+
+            FindObjectsTool findObjectsTool = new FindObjectsTool();
+            _tools.Add(findObjectsTool.Name, findObjectsTool);
+
+            InspectObjectTool inspectObjectTool = new InspectObjectTool();
+            _tools.Add(inspectObjectTool.Name, inspectObjectTool);
+
+            CaptureScreenshotTool captureScreenshotTool = new CaptureScreenshotTool();
+            _tools.Add(captureScreenshotTool.Name, captureScreenshotTool);
+
+            SimulateInputTool simulateInputTool = new SimulateInputTool();
+            _tools.Add(simulateInputTool.Name, simulateInputTool);
+
+            CallMethodTool callMethodTool = new CallMethodTool();
+            _tools.Add(callMethodTool.Name, callMethodTool);
+
+            SetTextTool setTextTool = new SetTextTool();
+            _tools.Add(setTextTool.Name, setTextTool);
+
+            PlayerPrefsTool playerPrefsTool = new PlayerPrefsTool();
+            _tools.Add(playerPrefsTool.Name, playerPrefsTool);
+
+            TimeControlTool timeControlTool = new TimeControlTool();
+            _tools.Add(timeControlTool.Name, timeControlTool);
+
+            ScreenInfoTool screenInfoTool = new ScreenInfoTool();
+            _tools.Add(screenInfoTool.Name, screenInfoTool);
+
+            CheckConditionTool checkConditionTool = new CheckConditionTool();
+            _tools.Add(checkConditionTool.Name, checkConditionTool);
+
             // Register BatchExecuteTool (must be registered last as it needs access to other tools)
             BatchExecuteTool batchExecuteTool = new BatchExecuteTool(this);
             _tools.Add(batchExecuteTool.Name, batchExecuteTool);
@@ -1020,7 +1059,7 @@ namespace McpUnity.Unity
                 case PlayModeStateChange.ExitingPlayMode:
                     break;
                 case PlayModeStateChange.EnteredEditMode:
-                    // Returned to Edit Mode
+                    // Returned to Edit Mode — ensure server is running
                     if (!_instance.IsListening && McpUnitySettings.Instance.AutoStartServer)
                     {
                         _instance.ScheduleStartServer(requireAutoStart: true, reason: "entered edit mode");

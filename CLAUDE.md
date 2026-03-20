@@ -109,6 +109,45 @@ Same pattern as tools:
 - **Unity logs**: Controlled by `EnableInfoLogs` in settings
 - **Node logs**: Set `LOGGING=true` environment variable
 
+## AltTester-Replacement Tools (Runtime Testing)
+
+12 additional tools that replace AltTester (AltUnityTester) functionality for automated UI/integration testing. The WebSocket server stays active during Play Mode to enable runtime interaction.
+
+### Play Mode & Lifecycle
+| Tool | Description |
+|------|-------------|
+| `play_mode_control` | Enter/exit Play Mode, pause/resume, get state. Async — waits for transition. |
+| `wait_for` | Polls Unity until a condition is met (object exists/gone, scene loaded, property equals). Polling logic runs on Node.js side via `check_condition`. |
+| `check_condition` | Internal helper for `wait_for` — checks a single condition and returns `conditionMet: bool`. |
+
+### Object Discovery & Inspection
+| Tool | Description |
+|------|-------------|
+| `find_objects` | Find GameObjects by tag, layer, component type, text content, partial name, or screen coordinates (raycast). |
+| `inspect_object` | Get world/screen position, bounds, text content, parent info for a GameObject. |
+
+### Input Simulation (Play Mode only)
+| Tool | Description |
+|------|-------------|
+| `simulate_input` | Click/tap (by path or coordinates), swipe, key press/release, mouse move, scroll, pointer events. Uses `ExecuteEvents` for UI interaction. |
+| `set_text` | Set text on `Text`, `TMP_Text`, `InputField`, `TMP_InputField`. Optional `submit` triggers `onEndEdit`. |
+
+### Runtime Access
+| Tool | Description |
+|------|-------------|
+| `call_method` | Call instance/static methods, get/set properties via reflection. Works on any component or type. |
+| `player_prefs` | Get/set/delete/has/delete_all PlayerPrefs. |
+| `time_control` | Get/set `Time.timeScale`, read frame count and elapsed time. |
+| `screen_info` | Get screen size, convert screen↔world coordinates. |
+| `capture_screenshot` | Render camera to PNG, return as base64. Works in both Edit and Play mode. |
+
+### Play Mode Architecture Notes
+- Server no longer stops on `ExitingEditMode` — stays active through Play Mode transitions
+- Domain reload during Play Mode entry will temporarily disconnect; server auto-restarts via `[DidReloadScripts]` and `EnteredPlayMode` handler
+- `simulate_input` validates `EditorApplication.isPlaying` and rejects calls in Edit Mode
+- `capture_screenshot` uses `Camera.Render()` in Edit Mode, same approach in Play Mode (avoids `ScreenCapture` timing issues)
+- TMP components accessed via reflection to avoid hard dependency on TextMeshPro package
+
 ## Common Pitfalls
 
 - **Name mismatch**: Node tool/resource name must equal Unity `Name` exactly
