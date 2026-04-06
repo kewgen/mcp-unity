@@ -11,6 +11,24 @@ MCP Unity exposes Unity Editor capabilities to MCP-enabled clients (Cursor, Wind
 
 **Data flow**: MCP Client ⇄ (stdio) ⇄ Node Server (`Server~/src/index.ts`) ⇄ (WebSocket) ⇄ Unity Editor (`Editor/UnityBridge/McpUnityServer.cs`)
 
+## Git remotes & fork (pfp2 — primary: kewgen)
+
+**pfp2 работает только с форком** — все коммиты пушатся в:
+
+`https://github.com/kewgen/mcp-unity.git` (remote **`fork`**).
+
+| Remote | Role | URL |
+|--------|------|-----|
+| **fork** | **Единственный целевой remote для push** и повседневной работы pfp2 | `https://github.com/kewgen/mcp-unity.git` |
+| **origin** | Апстрим CoderGamester: только `git fetch origin` при явной синхронизации с upstream (пуш в origin не используем для pfp2) | `https://github.com/CoderGamester/mcp-unity.git` |
+
+**Типичный поток**
+
+- `git push fork <branch>` — всегда пуш в форк (например `git push fork main`).
+- При необходимости подтянуть изменения апстрима: `git fetch origin` и merge/rebase вручную.
+
+**Cursor MCP client**: project-level `.mcp.json` at pfp2 root points Node at `mcp-unity/Server~/build/index.js`; global Cursor config may duplicate this. See also root `CLAUDE.md` → Unity MCP.
+
 ## Build & Development Commands
 
 ### Node.js Server (`Server~/`)
@@ -33,25 +51,51 @@ npm run inspector    # Launch MCP Inspector for debugging
 
 ```
 Editor/                       # Unity Editor package (C#)
-├── Tools/                    # MCP tools (inherit McpToolBase)
-├── Resources/                # MCP resources (inherit McpResourceBase)
-├── Services/                 # TestRunnerService, ConsoleLogsService
+├── Tools/                    # MCP tools (40 classes, inherit McpToolBase)
+├── Resources/                # MCP resources (7 classes, inherit McpResourceBase)
+├── Services/                 # TestRunnerService, ConsoleLogsService (+ interfaces)
+├── Models/                   # Request models (UpdateGameObjectRequest)
+├── Tests/                    # Unit tests (BatchExecute, Materials, PathHandling)
+├── Lib/                      # Dependencies (WebSocketSharp.dll)
 ├── UnityBridge/              # WebSocket server + message routing
-│   ├── McpUnityServer.cs     # Singleton managing server lifecycle
+│   ├── McpUnityServer.cs     # Singleton: server lifecycle, tool/resource registration
 │   └── McpUnitySocketHandler.cs  # WebSocket handler
 └── Utils/                    # Logging, config, workspace helpers
 
 Server~/                      # Node.js MCP server (TypeScript/ESM)
-├── src/index.ts              # Entry point - registers tools/resources
-├── src/tools/                # MCP tool definitions (zod + handler)
-├── src/resources/            # MCP resource definitions
+├── src/index.ts              # Entry point - registers tools/resources/prompts
+├── src/tools/                # MCP tool definitions (zod + handler) + toolHelper.ts
+├── src/resources/            # MCP resource definitions (7 files)
+├── src/prompts/              # MCP prompts (gameobjectHandlingPrompt.ts)
 └── src/unity/mcpUnity.ts     # WebSocket client connecting to Unity
 ```
+
+## Tool/Resource Architecture
+
+### Asymmetries between C# and TypeScript (by design)
+
+| Name | C# | TypeScript | Notes |
+|------|-----|-----------|-------|
+| `get_console_logs` | **Resource** (GetConsoleLogsResource) | **Tool** (getConsoleLogsTool) | TS wraps the resource as a tool for easier agent access |
+| `wait_for` | — | **Tool** (waitForTool) | TS-only: client-side polling loop that calls `check_condition` |
+| `check_condition` | **Tool** (CheckConditionTool) | — | Internal: used only by `wait_for` from TS side |
+
+### Tool counts
+- **C# Tools**: 40 classes in `Editor/Tools/` (registered in `McpUnityServer.RegisterTools()`)
+- **C# Resources**: 7 classes in `Editor/Resources/` (registered in `McpUnityServer.RegisterResources()`)
+- **TS Tools**: ~41 registered in `index.ts` (includes `get_console_logs` wrapper and `wait_for` polling)
+- **TS Resources**: 7 registered in `index.ts`
+- **TS Prompts**: 1 (`gameobjectHandlingPrompt`)
+
+### Multi-tool files (multiple classes per file)
+- `GameObjectTools.cs` / `gameObjectTools.ts` → `duplicate_gameobject`, `delete_gameobject`, `reparent_gameobject`
+- `MaterialTools.cs` / `materialTools.ts` → `create_material`, `assign_material`, `modify_material`, `get_material_info`
+- `TransformTools.cs` / `transformTools.ts` → `move_gameobject`, `rotate_gameobject`, `scale_gameobject`, `set_transform`
 
 ## Key Invariants
 
 - **WebSocket endpoint**: `ws://localhost:8090/McpUnity` (configurable)
-- **Config file**: `ProjectSettings/McpUnitySettings.json`
+- **Config file**: `ProjectSettings/McpUnitySettings.json` (inside Unity project)
 - **Tool/resource names must match exactly** between Node and Unity (use `lower_snake_case`)
 - **Execution thread**: All tool execution runs on Unity main thread via EditorCoroutineUtility
 
@@ -118,8 +162,8 @@ Same pattern as tools:
 | Tool | Description |
 |------|-------------|
 | `play_mode_control` | Enter/exit Play Mode, pause/resume, get state. Async — waits for transition. |
-| `wait_for` | Polls Unity until a condition is met (object exists/gone, scene loaded, property equals). Polling logic runs on Node.js side via `check_condition`. |
-| `check_condition` | Internal helper for `wait_for` — checks a single condition and returns `conditionMet: bool`. |
+| `wait_for` | TS-only: polls Unity via `check_condition` until condition is met (object exists/gone, scene loaded, property equals). |
+| `check_condition` | C#-only: internal helper for `wait_for` — checks a single condition and returns `conditionMet: bool`. |
 
 ### Object Discovery & Inspection
 | Tool | Description |
@@ -198,6 +242,13 @@ When running multiple agents, give each a unique name to trace which agent issue
 **Domain reload impact on all clients:**
 When ANY client triggers domain reload (Play Mode enter/exit, `recompile_scripts`), ALL connected MCP clients experience a WebSocket disconnect. Each client's `sendWithRetry` handles reconnection independently. The Unity server re-registers all tools after reload via `[DidReloadScripts]`.
 
+### Cleanup Rules (IMPORTANT)
+- **Always exit Play Mode** before finishing work: `play_mode_control exit`. Leaving Unity in Play Mode blocks other agents and the user.
+- **Restore timeScale** to 1 if changed via `time_control set`.
+- **Reset input** via `simulate_input reset` if used.
+- **Rule: leave Unity in the state you found it** — Edit Mode, timeScale=1, clean input.
+- If an error occurs during Play Mode testing, still call `play_mode_control exit` as cleanup.
+
 ### Play Mode Architecture Notes
 - Server no longer stops on `ExitingEditMode` — stays active through Play Mode transitions
 - Domain reload during Play Mode entry will temporarily disconnect; server auto-restarts via `[DidReloadScripts]` and `EnteredPlayMode` handler
@@ -219,7 +270,6 @@ When ANY client triggers domain reload (Play Mode enter/exit, `recompile_scripts
 - **C# classes**: PascalCase (e.g., `CreateSceneTool`)
 - **TypeScript functions**: camelCase (e.g., `registerCreateSceneTool`)
 - **Tool/resource names**: lower_snake_case (e.g., `create_scene`)
-- **Commits**: Conventional format - `feat(scope):`, `fix(scope):`, `chore:`
 - **Undo support**: Use `Undo.RecordObject()` for scene modifications
 
 ## Requirements
