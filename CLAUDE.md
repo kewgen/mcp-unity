@@ -238,6 +238,7 @@ When running multiple agents, give each a unique name to trace which agent issue
 1. **One writer, many readers**: One agent drives Play Mode and input simulation, others observe via `find_objects`, `inspect_object`, `capture_screenshot`
 2. **Sequential phases**: Agent A sets up scene → Agent B runs tests → Agent C captures results
 3. **Independent scenes**: Use `load_scene` additively for isolated testing (if scene design allows)
+4. **Queue-based ownership for shared Unity**: If multiple automation agents share one Unity instance, use an external lease+queue coordinator (for pfp2: `park/scripts/mcp-unity-lock.sh`) so each agent gets a visible wait state (`position`, `eta`, `current_owner`, `heartbeat_age`, `lease_ttl`) before entering critical MCP steps.
 
 **Domain reload impact on all clients:**
 When ANY client triggers domain reload (Play Mode enter/exit, `recompile_scripts`), ALL connected MCP clients experience a WebSocket disconnect. Each client's `sendWithRetry` handles reconnection independently. The Unity server re-registers all tools after reload via `[DidReloadScripts]`.
