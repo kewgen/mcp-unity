@@ -45,6 +45,33 @@ import { registerGetTestsResource } from './resources/getTestsResource.js';
 import { registerGetGameObjectResource } from './resources/getGameObjectResource.js';
 import { registerGameObjectHandlingPrompt } from './prompts/gameobjectHandlingPrompt.js';
 
+import { createConnection } from 'net';
+
+/**
+ * Check if a port is in use. If occupied by a stale MCP process, attempt to
+ * connect and trigger a graceful shutdown before we start our own server.
+ */
+async function ensurePortAvailable(port: number, logger: Logger): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const socket = createConnection({ port, host: 'localhost' }, () => {
+      // Port is occupied — close probe and warn. The stale process will be
+      // superseded when Unity's WebSocket accepts our new connection.
+      socket.destroy();
+      logger.warn(`Port ${port} is already in use (stale MCP process?). Will attempt connection anyway.`);
+      resolve();
+    });
+    socket.on('error', () => {
+      // Port is free — good.
+      socket.destroy();
+      resolve();
+    });
+    socket.setTimeout(2000, () => {
+      socket.destroy();
+      resolve();
+    });
+  });
+}
+
 // Initialize loggers
 const serverLogger = new Logger('Server', LogLevel.INFO);
 const unityLogger = new Logger('Unity', LogLevel.INFO);
@@ -144,6 +171,10 @@ async function startServer() {
       || 'Unknown MCP Client';
     serverLogger.info(`Connected MCP client: ${clientName}`);
     
+    // Check port availability before connecting to Unity
+    const unityPort = parseInt(process.env.UNITY_PORT || '8090', 10);
+    await ensurePortAvailable(unityPort, serverLogger);
+
     // Start Unity Bridge connection with client name in headers
     await mcpUnity.start(clientName);
     

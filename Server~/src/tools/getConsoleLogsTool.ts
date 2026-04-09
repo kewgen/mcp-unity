@@ -82,16 +82,12 @@ async function toolHandler(
 ): Promise<CallToolResult> {
   const { logType, offset = 0, limit = 50, includeStackTrace = true } = params;
 
-  // Send request to Unity using the same method name as the resource
-  // This allows reusing the existing Unity-side implementation
-  const response = await mcpUnity.sendRequest({
-    method: "get_console_logs",
-    params: {
-      logType: logType,
-      offset: offset,
-      limit: limit,
-      includeStackTrace: includeStackTrace,
-    },
+  // Send request to Unity with retry (reusing existing Unity-side implementation)
+  const response = await mcpUnity.sendRequestWithRetry("get_console_logs", {
+    logType: logType,
+    offset: offset,
+    limit: limit,
+    includeStackTrace: includeStackTrace,
   });
 
   if (!response.success) {
@@ -101,15 +97,31 @@ async function toolHandler(
     );
   }
 
+  // Truncate response to avoid token overflow (max ~100KB)
+  const MAX_RESPONSE_BYTES = 100_000;
+  let responseData = response.data || response.logs || response;
+  let text = JSON.stringify(responseData, null, 2);
+
+  if (text.length > MAX_RESPONSE_BYTES) {
+    // Truncate log entries until within limit
+    const logs = Array.isArray(responseData) ? responseData : responseData?.logs;
+    if (Array.isArray(logs)) {
+      const totalCount = logs.length;
+      while (logs.length > 1 && JSON.stringify(responseData, null, 2).length > MAX_RESPONSE_BYTES) {
+        logs.pop();
+      }
+      text = JSON.stringify(responseData, null, 2);
+      text += `\n[truncated: showing ${logs.length}/${totalCount} entries, response exceeded ${MAX_RESPONSE_BYTES / 1000}KB limit]`;
+    } else {
+      text = text.substring(0, MAX_RESPONSE_BYTES) + '\n[truncated: response exceeded limit]';
+    }
+  }
+
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify(
-          response.data || response.logs || response,
-          null,
-          2
-        ),
+        text,
       },
     ],
   };

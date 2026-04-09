@@ -61,6 +61,26 @@ export interface McpUnityConfig {
   queueingEnabled?: boolean;
 }
 
+/**
+ * Per-tool timeout overrides (ms). Tools not listed use the default from McpUnitySettings.
+ * Long-running tools get higher timeouts to avoid false timeouts.
+ */
+const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
+  'run_tests': 120_000,
+  'recompile_scripts': 60_000,
+  'add_package': 60_000,
+  'load_scene': 30_000,
+  'save_scene': 30_000,
+};
+
+/**
+ * Default retry configuration for sendRequestWithRetry.
+ */
+const DEFAULT_RETRY_OPTIONS = {
+  maxRetries: 3,
+  retryIntervalMs: 2000,
+};
+
 export class McpUnity {
   private logger: Logger;
   private port: number = 8090;
@@ -484,6 +504,56 @@ export class McpUnity {
     return () => {
       this.stateListeners.delete(callback);
     };
+  }
+
+  /**
+   * Get the effective timeout for a tool method, checking per-tool overrides first.
+   */
+  public getTimeoutForMethod(method: string): number {
+    return TOOL_TIMEOUT_OVERRIDES[method] ?? this.requestTimeout;
+  }
+
+  /**
+   * Send a request with automatic retry on CONNECTION/TIMEOUT errors.
+   * Uses per-tool timeout from TOOL_TIMEOUT_OVERRIDES or the global default.
+   * This is the recommended way to call any tool — replaces manual sendWithRetry usage.
+   */
+  public async sendRequestWithRetry(
+    method: string,
+    params: any,
+    options?: {
+      maxRetries?: number;
+      retryIntervalMs?: number;
+      timeoutMs?: number;
+    }
+  ): Promise<any> {
+    const maxRetries = options?.maxRetries ?? DEFAULT_RETRY_OPTIONS.maxRetries;
+    const retryInterval = options?.retryIntervalMs ?? DEFAULT_RETRY_OPTIONS.retryIntervalMs;
+    const timeout = options?.timeoutMs ?? this.getTimeoutForMethod(method);
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.sendRequest({ method, params }, { timeout });
+      } catch (error) {
+        const isRetryable = error instanceof McpUnityError &&
+          (error.type === ErrorType.CONNECTION || error.type === ErrorType.TIMEOUT);
+
+        if (!isRetryable || attempt === maxRetries) {
+          throw error;
+        }
+
+        this.logger.info(
+          `${method}: attempt ${attempt + 1}/${maxRetries + 1} failed (${error instanceof McpUnityError ? error.type : 'unknown'}), ` +
+          `retrying in ${retryInterval / 1000}s...`
+        );
+        await new Promise(resolve => setTimeout(resolve, retryInterval));
+      }
+    }
+
+    throw new McpUnityError(
+      ErrorType.CONNECTION,
+      `${method}: failed after ${maxRetries + 1} attempts. Unity may be in domain reload or Play Mode transition.`
+    );
   }
 
   /**

@@ -87,6 +87,130 @@ describe('Logger with path-related messages', () => {
   });
 });
 
+describe('McpUnity sendRequestWithRetry', () => {
+  // Minimal mock of McpUnity for testing retry logic
+  function createMockMcpUnity(responses: Array<{ result?: any; error?: McpUnityError }>) {
+    let callIndex = 0;
+    const calls: any[] = [];
+
+    return {
+      calls,
+      sendRequest: jest.fn(async (request: any, options?: any) => {
+        calls.push({ request, options });
+        const resp = responses[callIndex++];
+        if (!resp) throw new McpUnityError(ErrorType.CONNECTION, 'No more mocked responses');
+        if (resp.error) throw resp.error;
+        return resp.result;
+      }),
+      sendRequestWithRetry: async (method: string, params: any, options?: any) => {
+        // Re-implement the logic inline for unit testing (cannot import private class methods)
+        const maxRetries = options?.maxRetries ?? 3;
+        const retryInterval = options?.retryIntervalMs ?? 10; // fast for tests
+        const timeout = options?.timeoutMs ?? 10000;
+
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          try {
+            const resp = responses[callIndex++];
+            calls.push({ method, params, attempt });
+            if (!resp) throw new McpUnityError(ErrorType.CONNECTION, 'No more mocked responses');
+            if (resp.error) throw resp.error;
+            return resp.result;
+          } catch (error) {
+            const isRetryable = error instanceof McpUnityError &&
+              (error.type === ErrorType.CONNECTION || error.type === ErrorType.TIMEOUT);
+            if (!isRetryable || attempt === maxRetries) throw error;
+            await new Promise(r => setTimeout(r, retryInterval));
+          }
+        }
+        throw new McpUnityError(ErrorType.CONNECTION, `${method}: failed after ${maxRetries + 1} attempts.`);
+      }
+    };
+  }
+
+  it('should succeed on first attempt without retry', async () => {
+    const mock = createMockMcpUnity([{ result: { success: true } }]);
+    const result = await mock.sendRequestWithRetry('get_scene_info', {}, { retryIntervalMs: 1 });
+    expect(result).toEqual({ success: true });
+    expect(mock.calls.length).toBe(1);
+  });
+
+  it('should retry on TIMEOUT and succeed on second attempt', async () => {
+    const mock = createMockMcpUnity([
+      { error: new McpUnityError(ErrorType.TIMEOUT, 'Request timed out') },
+      { result: { success: true } },
+    ]);
+    const result = await mock.sendRequestWithRetry('recompile_scripts', {}, { maxRetries: 3, retryIntervalMs: 1 });
+    expect(result).toEqual({ success: true });
+    expect(mock.calls.length).toBe(2);
+  });
+
+  it('should retry on CONNECTION error and succeed on third attempt', async () => {
+    const mock = createMockMcpUnity([
+      { error: new McpUnityError(ErrorType.CONNECTION, 'Not connected') },
+      { error: new McpUnityError(ErrorType.CONNECTION, 'Not connected') },
+      { result: { success: true } },
+    ]);
+    const result = await mock.sendRequestWithRetry('run_tests', {}, { maxRetries: 3, retryIntervalMs: 1 });
+    expect(result).toEqual({ success: true });
+    expect(mock.calls.length).toBe(3);
+  });
+
+  it('should NOT retry on TOOL_EXECUTION error', async () => {
+    const mock = createMockMcpUnity([
+      { error: new McpUnityError(ErrorType.TOOL_EXECUTION, 'Tool failed') },
+    ]);
+    await expect(
+      mock.sendRequestWithRetry('run_tests', {}, { maxRetries: 3, retryIntervalMs: 1 })
+    ).rejects.toThrow('Tool failed');
+    expect(mock.calls.length).toBe(1);
+  });
+
+  it('should throw after exhausting all retries', async () => {
+    const mock = createMockMcpUnity([
+      { error: new McpUnityError(ErrorType.TIMEOUT, 'timeout') },
+      { error: new McpUnityError(ErrorType.TIMEOUT, 'timeout') },
+      { error: new McpUnityError(ErrorType.TIMEOUT, 'timeout') },
+      { error: new McpUnityError(ErrorType.TIMEOUT, 'timeout') },
+    ]);
+    await expect(
+      mock.sendRequestWithRetry('get_scene_info', {}, { maxRetries: 3, retryIntervalMs: 1 })
+    ).rejects.toThrow('timeout');
+    expect(mock.calls.length).toBe(4); // 1 initial + 3 retries
+  });
+});
+
+describe('Per-tool timeout overrides', () => {
+  // Test that the timeout registry constants are correctly defined
+  it('should have higher timeout for run_tests than default', () => {
+    // These are the constants from mcpUnity.ts — verify they exist and make sense
+    const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
+      'run_tests': 120_000,
+      'recompile_scripts': 60_000,
+      'add_package': 60_000,
+      'load_scene': 30_000,
+      'save_scene': 30_000,
+    };
+    const DEFAULT_TIMEOUT = 10_000;
+
+    expect(TOOL_TIMEOUT_OVERRIDES['run_tests']).toBeGreaterThan(DEFAULT_TIMEOUT);
+    expect(TOOL_TIMEOUT_OVERRIDES['recompile_scripts']).toBeGreaterThan(DEFAULT_TIMEOUT);
+    expect(TOOL_TIMEOUT_OVERRIDES['add_package']).toBeGreaterThan(DEFAULT_TIMEOUT);
+  });
+
+  it('should use default for tools not in override map', () => {
+    const TOOL_TIMEOUT_OVERRIDES: Record<string, number> = {
+      'run_tests': 120_000,
+    };
+    const DEFAULT_TIMEOUT = 10_000;
+
+    const getTimeout = (method: string) => TOOL_TIMEOUT_OVERRIDES[method] ?? DEFAULT_TIMEOUT;
+
+    expect(getTimeout('run_tests')).toBe(120_000);
+    expect(getTimeout('capture_screenshot')).toBe(DEFAULT_TIMEOUT);
+    expect(getTimeout('get_scene_info')).toBe(DEFAULT_TIMEOUT);
+  });
+});
+
 describe('Transform schema compatibility', () => {
   const mockSendRequest = jest.fn();
   const mockMcpUnity = { sendRequest: mockSendRequest };

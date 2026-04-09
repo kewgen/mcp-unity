@@ -31,10 +31,7 @@ export function registerGetSceneInfoTool(server: McpServer, mcpUnity: McpUnity, 
 }
 
 async function toolHandler(mcpUnity: McpUnity, params: any) {
-  const response = await mcpUnity.sendRequest({
-    method: toolName,
-    params
-  });
+  const response = await mcpUnity.sendRequestWithRetry(toolName, params);
 
   if (!response.success) {
     throw new McpUnityError(
