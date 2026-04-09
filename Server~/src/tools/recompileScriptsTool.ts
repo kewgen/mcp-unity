@@ -56,13 +56,10 @@ async function toolHandler(mcpUnity: McpUnity, params: z.infer<typeof paramsSche
   const returnWithLogs = params.returnWithLogs ?? true;
   const logsLimit = Math.max(0, Math.min(1000, params.logsLimit || 100));
 
-  // Send to Unity with validated parameters
-  const response = await mcpUnity.sendRequest({
-    method: toolName,
-    params: {
-      returnWithLogs,
-      logsLimit
-    }
+  // Send to Unity with retry (60s timeout for large projects, assembly reload may disconnect)
+  const response = await mcpUnity.sendRequestWithRetry(toolName, {
+    returnWithLogs,
+    logsLimit
   });
 
   if (!response.success) {
