@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,6 +20,10 @@ namespace McpUnity.Services
     public class TestRunnerService : ITestRunnerService, ICallbacks
     {
         private readonly TestRunnerApi _testRunnerApi;
+        /// <summary>
+        /// Сериализация run_tests: параллельные MCP-запросы иначе перезаписывают один общий _tcs и зависают без ответа.
+        /// </summary>
+        private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private TaskCompletionSource<JObject> _tcs;
         private bool _returnOnlyFailures;
         private bool _returnWithLogs;
@@ -73,21 +78,30 @@ namespace McpUnity.Services
         /// <returns>Task that resolves with test results when tests are complete</returns>
         public async Task<JObject> ExecuteTestsAsync(TestMode testMode, bool returnOnlyFailures, bool returnWithLogs, string testFilter = "")
         {
-            var filter = new Filter { testMode = testMode };
-
-            _tcs = new TaskCompletionSource<JObject>();
-            _returnOnlyFailures = returnOnlyFailures;
-            _returnWithLogs = returnWithLogs;
-
-            if (!string.IsNullOrEmpty(testFilter))
+            await _runGate.WaitAsync();
+            try
             {
-                filter.testNames = new[] { testFilter };
+                var filter = new Filter { testMode = testMode };
+
+                _tcs = new TaskCompletionSource<JObject>();
+                _returnOnlyFailures = returnOnlyFailures;
+                _returnWithLogs = returnWithLogs;
+
+                if (!string.IsNullOrEmpty(testFilter))
+                {
+                    filter.testNames = new[] { testFilter };
+                }
+
+                _testRunnerApi.Execute(new ExecutionSettings(filter));
+
+                return await WaitForCompletionAsync(
+                    McpUnitySettings.Instance.RequestTimeoutSeconds);
             }
-
-            _testRunnerApi.Execute(new ExecutionSettings(filter));
-
-            return await WaitForCompletionAsync(
-                McpUnitySettings.Instance.RequestTimeoutSeconds);
+            catch
+            {
+                TryReleaseRunGateAfterAbortedStart();
+                throw;
+            }
         }
         
         /// <summary>
@@ -166,31 +180,110 @@ namespace McpUnity.Services
         /// </summary>
         public void RunFinished(ITestResultAdaptor result)
         {
-            if (_tcs == null)
-                return;
-            
-            var summary = BuildResultJson(_results, result);
-            _tcs.TrySetResult(summary);
-            _tcs = null;
+            // Пишем сводку в XML под preflight L2 (`run-render-parity-check.sh`); без файла gate считает MCP-артефакт отсутствующим.
+            WriteAttractionParityGateXml(result);
+
+            if (_tcs != null)
+            {
+                var summary = BuildResultJson(_results, result);
+                _tcs.TrySetResult(summary);
+                _tcs = null;
+            }
+
+            SafeReleaseRunGate();
         }
 
         #endregion
 
         #region Helpers
 
+        /// <summary>
+        /// NUnit-подобный минимальный XML: корневой элемент с атрибутами failed/skipped/passed (как у Unity -testResults).
+        /// </summary>
+        private static void WriteAttractionParityGateXml(ITestResultAdaptor runResult)
+        {
+            try
+            {
+                var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+                if (string.IsNullOrEmpty(projectRoot))
+                    return;
+
+                var relative = Path.Combine("out", "parity-results", "attraction-editmode.xml");
+                var path = Path.Combine(projectRoot, relative);
+                var dir = Path.GetDirectoryName(path);
+                if (!string.IsNullOrEmpty(dir))
+                    Directory.CreateDirectory(dir);
+
+                int passed = runResult.PassCount;
+                int failed = runResult.FailCount;
+                int skipped = runResult.SkipCount;
+                var state = XmlEscape(runResult.ResultState ?? "");
+                var xml =
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                    $"<test-run failed=\"{failed}\" skipped=\"{skipped}\" passed=\"{passed}\" result=\"{state}\" />\n";
+                File.WriteAllText(path, xml);
+                McpLogger.LogInfo($"Parity gate L2 test summary written: {path}");
+            }
+            catch (Exception ex)
+            {
+                McpLogger.LogError($"Failed to write attraction-editmode.xml: {ex.Message}");
+            }
+        }
+
+        private static string XmlEscape(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+                return "";
+            return s
+                .Replace("&", "&amp;")
+                .Replace("\"", "&quot;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;");
+        }
+
         private async Task<JObject> WaitForCompletionAsync(int timeoutSeconds)
         {
-            var delayTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
-            var winner = await Task.WhenAny(_tcs.Task, delayTask);
-            
-            if (winner != _tcs.Task)
+            var pending = _tcs;
+            if (pending == null)
             {
-                _tcs.TrySetResult(
+                return McpUnitySocketHandler.CreateErrorResponse("Test runner not initialized", "test_runner_error");
+            }
+
+            var delayTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
+            var winner = await Task.WhenAny(pending.Task, delayTask);
+            
+            if (winner != pending.Task)
+            {
+                pending.TrySetResult(
                     McpUnitySocketHandler.CreateErrorResponse(
                         $"Test run timed out after {timeoutSeconds} seconds",
                         "test_runner_timeout"));
+                // Иначе _runGate остаётся занятым до RunFinished; при зависшем Test Runner все следующие run_tests висят на WaitAsync без лога Executing.
+                McpLogger.LogWarning("run_tests: timeout — releasing gate so MCP queue can proceed (late RunFinished may follow)");
+                SafeReleaseRunGate();
             }
-            return await _tcs.Task;
+            return await pending.Task;
+        }
+
+        private void SafeReleaseRunGate()
+        {
+            try
+            {
+                _runGate.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+                McpLogger.LogWarning("run_tests gate release skipped (already released)");
+            }
+        }
+
+        /// <summary>
+        /// Если Execute упал до старта раннера, освобождаем слот — иначе все последующие run_tests зависнут на WaitAsync.
+        /// </summary>
+        private void TryReleaseRunGateAfterAbortedStart()
+        {
+            _tcs = null;
+            SafeReleaseRunGate();
         }
 
         private JObject BuildResultJson(List<ITestResultAdaptor> results, ITestResultAdaptor result)
