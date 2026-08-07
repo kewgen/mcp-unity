@@ -49,10 +49,21 @@ namespace McpUnity.Unity
 
         private static void Drain()
         {
+            bool drainedAny = false;
+
             while (_queue.TryDequeue(out var action))
             {
+                drainedAny = true;
                 try { action(); }
                 catch (Exception ex) { McpLogger.LogError($"MainThreadDispatcher action failed: {ex}"); }
+            }
+
+            // park (INC-007): без фокуса Editor main loop тикает редко, и следующий шаг работы
+            // (продолжение EditorCoroutine, отправка ответа) ждёт случайного тика — запрос уходит
+            // в таймаут при уже принятом сообщении. Форсируем следующий цикл сами.
+            if (drainedAny)
+            {
+                EditorApplication.QueuePlayerLoopUpdate();
             }
         }
     }
@@ -245,11 +256,33 @@ namespace McpUnity.Unity
                 }
                 else if (_server.TryGetTool(method, out var tool))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(ExecuteTool(tool, parameters, tcs));
+                    // park (INC-007): сбой на старте корутины не должен уходить в общий catch —
+                    // там ответ уходит без request id, и клиент ждёт до таймаута.
+                    try
+                    {
+                        EditorCoroutineUtility.StartCoroutineOwnerless(ExecuteTool(tool, parameters, tcs));
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLogger.LogError($"MCP tool schedule: {tool.Name}: {ex.Message}\n{ex.StackTrace}");
+                        tcs.TrySetResult(CreateErrorResponse(
+                            $"Failed to start tool {tool.Name}: {ex.Message}",
+                            "tool_schedule_error"));
+                    }
                 }
                 else if (_server.TryGetResource(method, out var resource))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(FetchResourceCoroutine(resource, parameters, tcs));
+                    try
+                    {
+                        EditorCoroutineUtility.StartCoroutineOwnerless(FetchResourceCoroutine(resource, parameters, tcs));
+                    }
+                    catch (Exception ex)
+                    {
+                        McpLogger.LogError($"MCP resource schedule: {resource.Name}: {ex.Message}\n{ex.StackTrace}");
+                        tcs.TrySetResult(CreateErrorResponse(
+                            $"Failed to start resource {resource.Name}: {ex.Message}",
+                            "resource_schedule_error"));
+                    }
                 }
                 else
                 {

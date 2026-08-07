@@ -279,6 +279,9 @@ Cell-to-pixel conversion uses `CellW=70, CellH=36` (standard port). The tool use
 - **Unity domain reload**: Server stops during script reloads; avoid persistent in-memory state
 - **Port conflicts**: Default is 8090; check if another process is using it
 - **Multiplayer Play Mode**: Clone instances auto-skip server startup; only main editor hosts MCP
+- **Unity in background (no focus)**: `EditorApplication.delayCall` does not tick when Unity has no window focus. `McpUnitySocketHandler.ScheduleOnEditorMainThread` calls `EditorApplication.QueuePlayerLoopUpdate()` to force processing. If MCP still times out, activate Unity window: `osascript -e 'tell application "Unity" to activate'`
+- **IPv6 vs IPv4**: Unity WebSocket listens on IPv6 (`::1`). Use `localhost` (resolves to IPv6 on macOS), not `127.0.0.1`
+- **Zombie node processes**: Multiple MCP timeouts spawn orphan node processes. Diagnose: `lsof -i :8090 -P | grep node`. Kill stale ones but **never kill the Claude Code node process** without restarting Claude Code
 
 ## Code Conventions
 
