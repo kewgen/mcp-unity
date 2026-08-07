@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEditor;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using WebSocketSharp;
@@ -83,11 +84,38 @@ namespace McpUnity.Unity
                 }
                 else if (_server.TryGetTool(method, out var tool))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(ExecuteTool(tool, parameters, tcs));
+                    // websocket-sharp вызывает OnMessage с рабочего потока; EditorCoroutine/TestRunner без main thread не стартуют (в логе только message received).
+                    ScheduleOnEditorMainThread(() =>
+                    {
+                        try
+                        {
+                            EditorCoroutineUtility.StartCoroutineOwnerless(ExecuteTool(tool, parameters, tcs));
+                        }
+                        catch (Exception ex)
+                        {
+                            McpLogger.LogError($"MCP tool schedule: {tool.Name}: {ex.Message}\n{ex.StackTrace}");
+                            tcs.TrySetResult(CreateErrorResponse(
+                                $"Failed to start tool {tool.Name}: {ex.Message}",
+                                "tool_schedule_error"));
+                        }
+                    });
                 }
                 else if (_server.TryGetResource(method, out var resource))
                 {
-                    EditorCoroutineUtility.StartCoroutineOwnerless(FetchResourceCoroutine(resource, parameters, tcs));
+                    ScheduleOnEditorMainThread(() =>
+                    {
+                        try
+                        {
+                            EditorCoroutineUtility.StartCoroutineOwnerless(FetchResourceCoroutine(resource, parameters, tcs));
+                        }
+                        catch (Exception ex)
+                        {
+                            McpLogger.LogError($"MCP resource schedule: {resource.Name}: {ex.Message}\n{ex.StackTrace}");
+                            tcs.TrySetResult(CreateErrorResponse(
+                                $"Failed to start resource {resource.Name}: {ex.Message}",
+                                "resource_schedule_error"));
+                        }
+                    });
                 }
                 else
                 {
@@ -179,6 +207,35 @@ namespace McpUnity.Unity
             McpLogger.LogError($"WebSocket error: {e.Message}");
         }
         
+        private static System.Threading.SynchronizationContext s_mainThreadCtx;
+
+        [UnityEditor.InitializeOnLoadMethod]
+        private static void CaptureMainThreadContext()
+        {
+            s_mainThreadCtx = System.Threading.SynchronizationContext.Current;
+        }
+
+        private static void ScheduleOnEditorMainThread(Action action)
+        {
+            if (action == null)
+                return;
+
+            // Use SynchronizationContext to post to main thread (works even when Unity is in background)
+            if (s_mainThreadCtx != null)
+            {
+                s_mainThreadCtx.Post(_ =>
+                {
+                    action();
+                    EditorApplication.QueuePlayerLoopUpdate();
+                }, null);
+            }
+            else
+            {
+                // Fallback to delayCall
+                EditorApplication.delayCall += () => action();
+            }
+        }
+
         /// <summary>
         /// Execute a tool with the provided parameters
         /// </summary>
