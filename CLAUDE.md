@@ -272,6 +272,13 @@ When ANY client triggers domain reload (Play Mode enter/exit, `recompile_scripts
 
 Cell-to-pixel conversion uses `CellW=70, CellH=36` (standard port). The tool uses reflection to access `RuntimeParkNativeViewer` to avoid assembly dependency.
 
+## Transport Layer Improvements
+
+`sendRequestWithRetry()` in `mcpUnity.ts` provides unified retry for all tools:
+- **Per-tool timeouts**: `run_tests` 120s, `recompile_scripts` 60s, `load_scene`/`save_scene` 30s, default 10s
+- **Retry**: 3 attempts (CONNECTION/TIMEOUT errors), 2s delay between retries
+- **Response truncation**: `get_console_logs` capped at 100KB to prevent token overflow
+
 ## Common Pitfalls
 
 - **Name mismatch**: Node tool/resource name must equal Unity `Name` exactly
