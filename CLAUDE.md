@@ -81,9 +81,9 @@ Server~/                      # Node.js MCP server (TypeScript/ESM)
 | `check_condition` | **Tool** (CheckConditionTool) | — | Internal: used only by `wait_for` from TS side |
 
 ### Tool counts
-- **C# Tools**: 40 classes in `Editor/Tools/` (registered in `McpUnityServer.RegisterTools()`)
+- **C# Tools**: 41 classes in `Editor/Tools/` (registered in `McpUnityServer.RegisterTools()`, includes `CameraControlTool`)
 - **C# Resources**: 7 classes in `Editor/Resources/` (registered in `McpUnityServer.RegisterResources()`)
-- **TS Tools**: ~41 registered in `index.ts` (includes `get_console_logs` wrapper and `wait_for` polling)
+- **TS Tools**: ~42 registered in `index.ts` (includes `get_console_logs` wrapper, `wait_for` polling, `camera_control`)
 - **TS Resources**: 7 registered in `index.ts`
 - **TS Prompts**: 1 (`gameobjectHandlingPrompt`)
 
@@ -257,6 +257,20 @@ When ANY client triggers domain reload (Play Mode enter/exit, `recompile_scripts
 - `capture_screenshot` uses `Camera.Render()` in Edit Mode, same approach in Play Mode (avoids `ScreenCapture` timing issues)
 - TMP components accessed via reflection to avoid hard dependency on TextMeshPro package
 - All runtime tools import `sendWithRetry` from `toolHelper.ts` for connection resilience
+
+## Camera Control Tool (pfp2-specific)
+
+`camera_control` manages the park viewport (pan/zoom) through `RuntimeParkNativeViewer` properties.
+
+| Action | Parameters | Description |
+|--------|-----------|-------------|
+| `get` | — | Returns `{panX, panY, zoom, screenW, screenH}` |
+| `set` | `panX, panY, zoom` | Set absolute viewport position and zoom |
+| `move` | `deltaX, deltaY` | Relative pan offset |
+| `zoom` | `level` (0.1–3.0) | Set zoom level |
+| `center` | `cellX, cellY` | Center on isometric map cell (converts cell→pixel automatically) |
+
+Cell-to-pixel conversion uses `CellW=70, CellH=36` (standard port). The tool uses reflection to access `RuntimeParkNativeViewer` to avoid assembly dependency.
 
 ## Common Pitfalls
 

@@ -36,6 +36,7 @@ import { registerPlayerPrefsTool } from './tools/playerPrefsTool.js';
 import { registerTimeControlTool } from './tools/timeControlTool.js';
 import { registerScreenInfoTool } from './tools/screenInfoTool.js';
 import { registerWaitForTool } from './tools/waitForTool.js';
+import { registerCameraControlTool } from './tools/cameraControlTool.js';
 import { registerGetMenuItemsResource } from './resources/getMenuItemResource.js';
 import { registerGetConsoleLogsResource } from './resources/getConsoleLogsResource.js';
 import { registerGetHierarchyResource } from './resources/getScenesHierarchyResource.js';
@@ -138,6 +139,9 @@ registerPlayerPrefsTool(server, mcpUnity, toolLogger);
 registerTimeControlTool(server, mcpUnity, toolLogger);
 registerScreenInfoTool(server, mcpUnity, toolLogger);
 registerWaitForTool(server, mcpUnity, toolLogger);
+
+// Register Camera Control Tool (park viewport pan/zoom/center)
+registerCameraControlTool(server, mcpUnity, toolLogger);
 
 // Register Batch Execute Tool (high-priority for performance)
 registerBatchExecuteTool(server, mcpUnity, toolLogger);

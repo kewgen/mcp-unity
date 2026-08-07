@@ -453,6 +453,10 @@ namespace McpUnity.Unity
             CheckConditionTool checkConditionTool = new CheckConditionTool();
             _tools.Add(checkConditionTool.Name, checkConditionTool);
 
+            // Register CameraControlTool (park viewport pan/zoom)
+            CameraControlTool cameraControlTool = new CameraControlTool();
+            _tools.Add(cameraControlTool.Name, cameraControlTool);
+
             // Register BatchExecuteTool (must be registered last as it needs access to other tools)
             BatchExecuteTool batchExecuteTool = new BatchExecuteTool(this);
             _tools.Add(batchExecuteTool.Name, batchExecuteTool);
