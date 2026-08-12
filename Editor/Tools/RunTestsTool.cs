@@ -3,6 +3,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using McpUnity.Unity;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEditor.SceneManagement;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using UnityEditor.TestTools.TestRunner.Api;
@@ -47,6 +49,43 @@ namespace McpUnity.Tools
             }
 
             McpLogger.LogInfo($"Executing RunTestsTool: Mode={testMode}, Filter={testFilter ?? "(none)"}");
+
+            // Unity-specific (парк, INC-052): грязная сцена на старте EditMode-тестов вызывает
+            // модалку «Scene(s) Have Been Modified», которая блокирует TestRunner и MCP-мост.
+            // Сцену в автоматизации пачкает сам рендер-экспорт (программное создание объектов
+            // вьюера ставит dirty автоматически), сохранять этот мусор в .unity нельзя.
+            // Политика dirtyScenePolicy: discard (default) — перечитать сцену с диска без
+            // сохранения; fail — вернуть ошибку сразу; ignore — прежнее поведение (модалка).
+            string dirtyScenePolicy = parameters?["dirtyScenePolicy"]?.ToObject<string>() ?? "discard";
+            if (!string.Equals(dirtyScenePolicy, "ignore", StringComparison.OrdinalIgnoreCase))
+            {
+                var dirtyScenes = new List<Scene>();
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    Scene s = SceneManager.GetSceneAt(i);
+                    if (s.isLoaded && s.isDirty) dirtyScenes.Add(s);
+                }
+
+                if (dirtyScenes.Count > 0)
+                {
+                    bool anyWithoutPath = dirtyScenes.Exists(s => string.IsNullOrEmpty(s.path));
+                    if (string.Equals(dirtyScenePolicy, "fail", StringComparison.OrdinalIgnoreCase) || anyWithoutPath)
+                    {
+                        tcs.SetResult(McpUnitySocketHandler.CreateErrorResponse(
+                            $"Scene(s) have unsaved changes ({dirtyScenes.Count}); test run would hang on the save prompt. " +
+                            "Discard via Park/Debug/Reload Scene From Disk, save manually, or pass dirtyScenePolicy=discard.",
+                            "dirty_scene"
+                        ));
+                        return;
+                    }
+
+                    // discard: перечитать активную сцену с диска — программный OpenScene(Single)
+                    // молча отбрасывает несохранённые изменения всех открытых сцен, модалки нет.
+                    string activePath = SceneManager.GetActiveScene().path;
+                    McpLogger.LogInfo($"RunTestsTool: {dirtyScenes.Count} dirty scene(s) — discarding by reloading '{activePath}' from disk (dirtyScenePolicy=discard)");
+                    EditorSceneManager.OpenScene(activePath, OpenSceneMode.Single);
+                }
+            }
 
             // Call the service to run tests
             JObject result = await _testRunnerService.ExecuteTestsAsync(testMode, returnOnlyFailures, returnWithLogs, testFilter);

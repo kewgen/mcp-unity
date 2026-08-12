@@ -11,7 +11,8 @@ const paramsSchema = z.object({
   scenePath: z.string().optional().describe("Full asset path to the scene (e.g., 'Assets/Scenes/MyScene.unity')"),
   sceneName: z.string().optional().describe('Scene name without extension (used if scenePath not provided)'),
   folderPath: z.string().optional().describe("Optional folder scope to resolve sceneName under 'Assets'"),
-  additive: z.boolean().optional().describe('Load additively if true; default false')
+  additive: z.boolean().optional().describe('Load additively if true; default false'),
+  saveOpenScenes: z.boolean().optional().describe('Save open scenes before non-additive load. Default false: unsaved automation changes are discarded silently (ADR-0014 park)')
 });
 
 export function registerLoadSceneTool(server: McpServer, mcpUnity: McpUnity, logger: Logger) {

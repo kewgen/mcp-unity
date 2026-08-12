@@ -75,8 +75,13 @@ namespace McpUnity.Tools
 
             try
             {
-                // Avoid any save prompts: save open scenes before replacing them (non-additive)
-                if (!additive)
+                // Unity-specific (парк, INC-052): раньше здесь был SaveOpenScenes() «чтобы не было
+                // модалки» — он молча записывал в .unity мусор автоматизации (объекты вьюера,
+                // созданные экспортом, пачкают сцену автоматически). Программный OpenScene(Single)
+                // и так не показывает модалку — несохранённые изменения отбрасываются; сохранение
+                // по-прежнему доступно явно через saveOpenScenes=true.
+                bool saveOpenScenes = parameters["saveOpenScenes"]?.ToObject<bool?>() ?? false;
+                if (!additive && saveOpenScenes)
                 {
                     UnityEditor.SceneManagement.EditorSceneManager.SaveOpenScenes();
                 }

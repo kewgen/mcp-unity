@@ -12,7 +12,8 @@ const paramsSchema = z.object({
   testMode: z.string().optional().default('EditMode').describe('The test mode to run (EditMode or PlayMode) - defaults to EditMode (optional)'),
   testFilter: z.string().optional().default('').describe('The specific test filter to run (e.g. specific test name or class name, must include namespace) (optional)'),
   returnOnlyFailures: z.boolean().optional().default(true).describe('Whether to show only failed tests in the results (optional)'),
-  returnWithLogs: z.boolean().optional().default(false).describe('Whether to return the test logs in the results (optional)')
+  returnWithLogs: z.boolean().optional().default(false).describe('Whether to return the test logs in the results (optional)'),
+  dirtyScenePolicy: z.enum(['discard', 'fail', 'ignore']).optional().default('discard').describe('What to do when a loaded scene has unsaved changes before the run: discard = reload scene from disk silently (default), fail = return dirty_scene error, ignore = legacy behavior (may hang on the save dialog) (optional)')
 });
 
 /**
@@ -58,7 +59,8 @@ async function toolHandler(mcpUnity: McpUnity, params: any = {}): Promise<CallTo
     testMode = 'EditMode',
     testFilter = '',
     returnOnlyFailures = true,
-    returnWithLogs = false
+    returnWithLogs = false,
+    dirtyScenePolicy = 'discard'
   } = params;
 
   // Create and wait for the test run (120s timeout for large test suites, retry on transient failures)
@@ -66,7 +68,8 @@ async function toolHandler(mcpUnity: McpUnity, params: any = {}): Promise<CallTo
     testMode,
     testFilter,
     returnOnlyFailures,
-    returnWithLogs
+    returnWithLogs,
+    dirtyScenePolicy
   });
   
   // Process the test results
