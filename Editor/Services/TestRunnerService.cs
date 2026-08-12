@@ -89,7 +89,13 @@ namespace McpUnity.Services
 
                 if (!string.IsNullOrEmpty(testFilter))
                 {
-                    filter.testNames = new[] { testFilter };
+                    // Полное имя теста (содержит точку) — точечный запуск через testNames.
+                    // Иначе — grain-фильтр: Unity Filter.groupNames трактует строку как regex по
+                    // FullName ("JavaParityAttraction" запускает все классы с этим префиксом).
+                    if (testFilter.Contains("."))
+                        filter.testNames = new[] { testFilter };
+                    else
+                        filter.groupNames = new[] { testFilter };
                 }
 
                 _testRunnerApi.Execute(new ExecutionSettings(filter));
