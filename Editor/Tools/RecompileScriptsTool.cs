@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using McpUnity.Unity;
 using McpUnity.Utils;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -183,12 +184,29 @@ namespace McpUnity.Tools {
 
             summaryMessage += $" (returnWithLogs: {request.ReturnWithLogs}, logsLimit: {request.LogsLimit})";
 
-            var response = new JObject 
+            // Unity-specific (парк, CMP-135 / INC-120): ответ приходит по compilationFinished — это конец
+            // КОМПИЛЯЦИИ. Дальше Unity перезагружает домен (в этом проекте ~30 с), и ответ, отданный после
+            // reload, доставить по тому же сокету нельзя: сервер останавливается, домен вместе с продолжениями
+            // сносится. Поэтому контракт делается явным: в ответе едет поколение домена ДО reload, а вызывающий
+            // ждёт, пока мост не начнёт отдавать поколение больше этого.
+            bool domainReloadPending = !result.HasErrors;
+            int domainGeneration = McpUnityDomainReloadGate.Default.Generation;
+
+            if (domainReloadPending)
+            {
+                summaryMessage += ". ВНИМАНИЕ: это конец компиляции, дальше идёт domain reload — мост будет " +
+                                  $"недоступен десятки секунд. Ждать, пока bridge не вернёт domainGeneration > {domainGeneration}; " +
+                                  "запросы в этом окне получают явную ошибку domain_reloading / domain_reload_aborted.";
+            }
+
+            var response = new JObject
             {
                 ["success"] = true,
                 ["type"] = "text",
                 ["message"] = summaryMessage,
-                ["logs"] = logsArray
+                ["logs"] = logsArray,
+                ["domainReloadPending"] = domainReloadPending,
+                ["domainGeneration"] = domainGeneration
             };
 
             request.CompletionSource.SetResult(response);

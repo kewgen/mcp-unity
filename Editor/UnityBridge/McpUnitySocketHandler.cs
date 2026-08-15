@@ -247,8 +247,26 @@ namespace McpUnity.Unity
                 var method = requestJson["method"]?.ToString();
                 var parameters = requestJson["params"] as JObject ?? new JObject();
                 var requestId = requestJson["id"]?.ToString();
+
+                // park (CMP-135 / INC-120): запрос, попавший в окно domain reload, выполнен быть
+                // не может — главный поток заморожен, а домен вместе с продолжением ниже
+                // (`await tcs.Task`) вот-вот будет снесён. Отказываем явно, вместо тишины до
+                // клиентского таймаута.
+                if (McpUnityDomainReloadGate.Default.TryRejectDuringReload(method, out JObject reloadError))
+                {
+                    Send(CreateResponse(requestId, reloadError).ToString(Formatting.None));
+                    return;
+                }
+
                 // We need to dispatch to Unity's main thread and wait for completion
                 var tcs = new TaskCompletionSource<JObject>();
+
+                // Запрос на учёте у гейта: если reload начнётся до ответа, гейт ответит за нас
+                // (и сделает это до остановки WebSocket-сервера, пока сокет ещё жив).
+                var pending = McpUnityDomainReloadGate.Default.Register(method, response =>
+                {
+                    Send(CreateResponse(requestId, response).ToString(Formatting.None));
+                });
 
                 if (string.IsNullOrEmpty(method))
                 {
@@ -290,6 +308,16 @@ namespace McpUnity.Unity
                 }
 
                 JObject responseJson = await tcs.Task;
+
+                // park: гонка с гейтом — ответ отправляет ровно один из двух путей.
+                if (!pending.TryClaim())
+                {
+                    McpLogger.LogWarning($"Response for request ID '{requestId}' dropped: already answered by the domain reload gate");
+                    return;
+                }
+
+                McpUnityDomainReloadGate.Default.Unregister(pending);
+
                 JObject jsonRpcResponse = CreateResponse(requestId, responseJson);
                 string responseStr = jsonRpcResponse.ToString(Formatting.None);
 

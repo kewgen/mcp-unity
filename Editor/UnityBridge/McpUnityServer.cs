@@ -25,6 +25,12 @@ namespace McpUnity.Unity
         /// Unity is entering Play mode - clients should use fast polling instead of backoff
         /// </summary>
         public const ushort PlayMode = 4001;
+
+        /// <summary>
+        /// Unity-specific (парк, CMP-135 / INC-120): мост уходит в domain reload (в этом проекте ~30 с).
+        /// Клиент обязан считать закрытие с этим кодом явным отказом, а не поводом ждать ответа до таймаута.
+        /// </summary>
+        public const ushort DomainReload = 4002;
     }
 
     /// <summary>
@@ -319,6 +325,11 @@ namespace McpUnity.Unity
 
             EditorApplication.quitting -= OnEditorQuitting; // Prevent multiple subscriptions on domain reload
             EditorApplication.quitting += OnEditorQuitting;
+
+            // park (CMP-135 / INC-120): гейт domain reload подписывается на beforeAssemblyReload
+            // раньше сервера — он обязан ответить зависшим запросам ДО того, как StopServer
+            // закроет сокеты. Метод идемпотентен.
+            McpUnityDomainReloadGate.Initialize();
 
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeAssemblyReload;
             AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
@@ -1009,7 +1020,12 @@ namespace McpUnity.Unity
         {
             if (_instance == null) return;
             
-            _instance.StopServer();
+            if (_instance.IsListening)
+            {
+                // Unity-specific (парк, CMP-135 / INC-120): закрываем с явным кодом и причиной — раньше клиент
+                // получал close 1005 без причины и висел до собственного таймаута, считая запрос «потерянным».
+                _instance.StopServer(UnityCloseCode.DomainReload, "Unity domain reload: bridge unavailable for tens of seconds, retry after reload");
+            }
         }
 
         /// <summary>

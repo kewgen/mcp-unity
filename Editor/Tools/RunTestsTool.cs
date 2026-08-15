@@ -88,8 +88,19 @@ namespace McpUnity.Tools
             }
 
             // Call the service to run tests
-            JObject result = await _testRunnerService.ExecuteTestsAsync(testMode, returnOnlyFailures, returnWithLogs, testFilter);
-            tcs.SetResult(result);
+            // Unity-specific (парк, CMP-135 / INC-120): ExecuteAsync — async void, поэтому исключение отсюда
+            // не достаётся вызывающему и запрос молча повисает. Любой отказ обязан прийти клиенту ответом.
+            try
+            {
+                JObject result = await _testRunnerService.ExecuteTestsAsync(testMode, returnOnlyFailures, returnWithLogs, testFilter);
+                tcs.TrySetResult(result);
+            }
+            catch (Exception ex)
+            {
+                McpLogger.LogError($"RunTestsTool failed: {ex.Message}\n{ex.StackTrace}");
+                tcs.TrySetResult(McpUnitySocketHandler.CreateErrorResponse(
+                    $"Test run failed: {ex.Message}", "test_run_error"));
+            }
         }
     }
 }
