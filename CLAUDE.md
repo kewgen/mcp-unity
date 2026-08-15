@@ -29,6 +29,32 @@ MCP Unity exposes Unity Editor capabilities to MCP-enabled clients (Cursor, Wind
 
 **Cursor MCP client**: project-level `.mcp.json` at pfp2 root points Node at `mcp-unity/Server~/build/index.js`; global Cursor config may duplicate this. See also root `CLAUDE.md` → Unity MCP.
 
+## Две копии пакета: этот репозиторий ↔ встроенная копия park (INC-126)
+
+**Unity компилирует НЕ этот репозиторий.** Editor собирает встроенную копию
+`park/unity/My project/Packages/com.gamelovers.mcp-unity/`; здесь ведётся разработка, и
+этот код не собирается ничем. Поэтому расхождение накапливается молча — и накопилось:
+встроенная копия заведена снимком апстрима 1.3.0 (`d176a9d`), этот репозиторий стоит на
+апстриме 1.2.0 (`72c005f`) + 15 park-коммитов, апстрим ушёл на 1.4.0. Разбор — park
+`docs/odr/INC-126-mcp-unity-embedded-copy-drift.md`.
+
+**Правило: патч, внесённый в одну копию, в тот же день переносится во вторую.** Пока базы
+не сведены, перенос двусторонний и делается руками; после сведения встроенная копия
+становится производной (побайтовым экспортом `Editor/` отсюда), а не второй веткой разработки.
+
+```bash
+# park: что разошлось (опись; --strict = расхождение это ошибка, включать после сведения баз)
+./scripts/check-mcp-unity-sync.sh --report
+
+# park: обе копии компилируются офлайн, без запуска Editor — единственная проверка
+# для ЭТОГО репозитория, который Unity не собирает
+./scripts/check-mcp-unity-compile.sh --both
+```
+
+Перенос патча сюда без прогона `check-mcp-unity-compile.sh --repo` — это правка вслепую:
+ошибка компиляции всплывёт только при следующем экспорте во встроенную копию, то есть
+уронит общий для всех агентов мост.
+
 ## Build & Development Commands
 
 ### Node.js Server (`Server~/`)
