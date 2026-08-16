@@ -5,7 +5,11 @@ import { registerGetScenesHierarchyTool } from '../tools/getScenesHierarchyTool.
 
 const mockSendRequest = jest.fn();
 const mockMcpUnity = {
-  sendRequest: mockSendRequest
+  sendRequest: mockSendRequest,
+  // park: get_console_logs ходит через sendRequestWithRetry (единый retry-слой моста),
+  // поэтому мок обязан отдавать и его — иначе тест падает на самом инструменте, а не на контракте.
+  sendRequestWithRetry: (method: string, params: any, _options?: any) =>
+    mockSendRequest({ method, params })
 };
 
 const mockLogger = {

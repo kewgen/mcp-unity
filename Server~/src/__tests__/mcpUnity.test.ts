@@ -208,6 +208,8 @@ describe('Unity request/response diagnostics', () => {
     );
 
     await unity.stop();
+  });
+});
 
 describe('McpUnity sendRequestWithRetry', () => {
   // Minimal mock of McpUnity for testing retry logic

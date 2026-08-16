@@ -97,21 +97,22 @@ async function toolHandler(
     );
   }
 
-  // Truncate response to avoid token overflow (max ~100KB)
+  const logs = response.data ?? response.logs ?? response;
+
+  // park: обрезать ответ, чтобы не переполнять контекст клиента (max ~100KB)
   const MAX_RESPONSE_BYTES = 100_000;
-  let responseData = response.data ?? response.logs ?? response;
-  let text = JSON.stringify(responseData, null, 2);
+  let text = JSON.stringify(logs, null, 2);
 
   if (text.length > MAX_RESPONSE_BYTES) {
-    // Truncate log entries until within limit
-    const logs = Array.isArray(responseData) ? responseData : responseData?.logs;
-    if (Array.isArray(logs)) {
-      const totalCount = logs.length;
-      while (logs.length > 1 && JSON.stringify(responseData, null, 2).length > MAX_RESPONSE_BYTES) {
-        logs.pop();
+    // Отбрасываем записи с конца, пока не уложимся в лимит
+    const entries = Array.isArray(logs) ? logs : logs?.logs;
+    if (Array.isArray(entries)) {
+      const totalCount = entries.length;
+      while (entries.length > 1 && JSON.stringify(logs, null, 2).length > MAX_RESPONSE_BYTES) {
+        entries.pop();
       }
-      text = JSON.stringify(responseData, null, 2);
-      text += `\n[truncated: showing ${logs.length}/${totalCount} entries, response exceeded ${MAX_RESPONSE_BYTES / 1000}KB limit]`;
+      text = JSON.stringify(logs, null, 2);
+      text += `\n[truncated: showing ${entries.length}/${totalCount} entries, response exceeded ${MAX_RESPONSE_BYTES / 1000}KB limit]`;
     } else {
       text = text.substring(0, MAX_RESPONSE_BYTES) + '\n[truncated: response exceeded limit]';
     }
