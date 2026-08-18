@@ -386,7 +386,11 @@ namespace McpUnity.Unity
             try
             {
                 int connectionGeneration = Interlocked.Increment(ref _connectionGeneration);
-                var host = McpUnitySettings.Instance.AllowRemoteConnections ? "0.0.0.0" : "localhost";
+                // INC-131: bind the loopback listener to IPv4 explicitly. With "localhost" the
+                // listener also claims [::1], so an orphaned socket left on the IPv6 loopback by a
+                // dead editor makes every subsequent start fail with AddressAlreadyInUse. Clients
+                // reach the bridge over 127.0.0.1 (see scripts/mcp-unity-call.mjs).
+                var host = McpUnitySettings.Instance.AllowRemoteConnections ? "0.0.0.0" : "127.0.0.1";
                 webSocketServer = new WebSocketServer($"ws://{host}:{McpUnitySettings.Instance.Port}");
                 webSocketServer.Log.Output = (data, path) => { };
                 webSocketServer.AddWebSocketService("/McpUnity", () => new McpUnitySocketHandler(this, connectionGeneration));
