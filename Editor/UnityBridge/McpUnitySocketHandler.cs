@@ -123,6 +123,33 @@ namespace McpUnity.Unity
             }
 
             string data = e.Data;
+
+            // Unity-specific (парк, CMP-135/CMP-151, INC-120/INC-127): очередь диспетчера дренируется
+            // из EditorApplication.update, поэтому при domain reload или застывшем главном потоке
+            // (модалка, чужой бесконечный update) поставленный в очередь запрос молча умрёт — клиент
+            // будет ждать свои 120 с. Обе проверки не требуют главного потока и выполняются здесь,
+            // на потоке приёма; парсинг минимальный — только ради method/id для ответа. Невалидный
+            // JSON пропускаем дальше: штатный invalid_json ответ формирует HandleMessageAsync.
+            try
+            {
+                var probe = JObject.Parse(data);
+                var probeMethod = probe["method"]?.ToString();
+                var probeRequestId = probe["id"]?.ToString();
+                if (McpUnityDomainReloadGate.Default.TryRejectDuringReload(probeMethod, out JObject earlyReloadError))
+                {
+                    Send(CreateResponse(probeRequestId, earlyReloadError).ToString(Formatting.None));
+                    return;
+                }
+                if (McpUnityDomainReloadGate.Default.TryRejectMainThreadBlocked(probeMethod, out JObject earlyStallError))
+                {
+                    Send(CreateResponse(probeRequestId, earlyStallError).ToString(Formatting.None));
+                    return;
+                }
+            }
+            catch (JsonReaderException)
+            {
+            }
+
             // Dispatch via a thread-safe queue drained in EditorApplication.update rather than
             // EditorApplication.delayCall. A delayCall "+=" from this background thread is not
             // reliably drained by the main thread while the Editor is unfocused/idle, so the

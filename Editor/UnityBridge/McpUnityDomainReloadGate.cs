@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 using McpUnity.Utils;
 using Newtonsoft.Json.Linq;
@@ -31,6 +32,15 @@ namespace McpUnity.Unity
     /// used by the live bridge; tests take their own instance, otherwise they would flip the state of the
     /// running bridge and abort the very requests that carry them (seen once: a test run aborted its own
     /// run_tests request with domain_reload_aborted).
+    ///
+    /// Unity-specific (park, CMP-151 / INC-127): the same gate also carries a main-thread liveness watchdog.
+    /// A domain reload is only one way the main thread can stop; a modal dialog (NSAlert runModal) or an
+    /// endless loop in somebody's EditorApplication.update freezes it just as hard, and none of the editor
+    /// events above fire for those. What all of them share is that <see cref="Tick"/> stops being called,
+    /// while the WebSocket receive thread keeps accepting connections — the client sees a request logged and
+    /// no answer, and retries (15 times in a row in INC-127). So the watchdog needs no dialog detection: the
+    /// absence of ticks IS the proof that there is nowhere to dispatch the request to. See
+    /// <see cref="TryRejectMainThreadBlocked"/>.
     /// </summary>
     [InitializeOnLoad]
     public class McpUnityDomainReloadGate
@@ -48,6 +58,29 @@ namespace McpUnity.Unity
         public const int RetryAfterMs = 5000;
 
         /// <summary>
+        /// Unity-specific (park, CMP-151 / INC-127): how long the main thread may go without a tick before it
+        /// is declared frozen. Deliberately generous — an unfocused editor throttles its update loop, and a
+        /// false "blocked" would make the bridge refuse a perfectly healthy editor. Ten seconds is still two
+        /// orders of magnitude below the client timeout (120s) that this replaces, and the state is
+        /// self-correcting: one tick and requests are accepted again.
+        /// </summary>
+        public const double MainThreadStallSeconds = 10.0;
+
+        /// <summary>
+        /// Hint for the client after a stall. A frozen main thread is not a wait-and-it-passes condition like a
+        /// domain reload — somebody has to dismiss the dialog (or the cause is fixed by CMP-150), so the hint is
+        /// long on purpose: retrying sooner cannot help.
+        /// </summary>
+        public const int MainThreadStallRetryAfterMs = 30000;
+
+        /// <summary>
+        /// Wall clock readable from any thread. <see cref="EditorApplication.timeSinceStartup"/> — the clock the
+        /// gate ticks with — is main-thread only, and the freeze has to be detected from the socket receive
+        /// thread, which is the whole point.
+        /// </summary>
+        private static readonly System.Diagnostics.Stopwatch MonotonicClock = System.Diagnostics.Stopwatch.StartNew();
+
+        /// <summary>
         /// Tools that stay callable while the editor is merely compiling: recompile_scripts is exactly the tool
         /// a caller uses to wait for a compilation it has just triggered, so refusing it would break the only
         /// synchronization point the bridge has. It is still refused once the reload itself has started.
@@ -60,6 +93,7 @@ namespace McpUnity.Unity
             new ConcurrentDictionary<long, PendingRequest>();
 
         private readonly bool _persistGeneration;
+        private readonly Func<double> _monotonicNow;
 
         private long _nextTicketId;
         private volatile string _busyReason;
@@ -67,14 +101,29 @@ namespace McpUnity.Unity
         private volatile int _generation;
         private double _quietSince = -1;
 
+        /// <summary>Monotonic seconds of the last main-thread tick. Written on the main thread, read on the
+        /// socket thread — always through Interlocked, a plain double read is not atomic.</summary>
+        private double _lastMainThreadTick;
+
+        private volatile bool _mainThreadTickSeen;
+        private volatile bool _stallLogged;
+
         static McpUnityDomainReloadGate()
         {
             Initialize();
         }
 
         public McpUnityDomainReloadGate(bool persistGeneration)
+            : this(persistGeneration, null)
+        {
+        }
+
+        /// <param name="monotonicNow">thread-safe clock in seconds; tests drive the watchdog with a fake one
+        /// instead of sleeping for <see cref="MainThreadStallSeconds"/></param>
+        public McpUnityDomainReloadGate(bool persistGeneration, Func<double> monotonicNow)
         {
             _persistGeneration = persistGeneration;
+            _monotonicNow = monotonicNow ?? (() => MonotonicClock.Elapsed.TotalSeconds);
         }
 
         /// <summary>The gate of the live bridge — the only instance wired to the editor events</summary>
@@ -124,6 +173,41 @@ namespace McpUnity.Unity
 
         /// <summary>Number of requests currently in flight (diagnostics and tests)</summary>
         public int PendingCount => _pendingRequests.Count;
+
+        /// <summary>Methods of the requests currently in flight — named in the stall report as the prime
+        /// suspect: whatever froze the main thread was most likely started by one of them.</summary>
+        public string[] PendingMethods
+        {
+            get
+            {
+                var methods = new List<string>();
+                foreach (var pair in _pendingRequests)
+                {
+                    methods.Add(pair.Value.Method ?? "(no method)");
+                }
+
+                return methods.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Seconds since the last main-thread tick, or -1 while no tick has been seen at all. Callable from any
+        /// thread.
+        /// </summary>
+        public double SecondsSinceMainThreadTick
+        {
+            get
+            {
+                if (!_mainThreadTickSeen)
+                {
+                    return -1;
+                }
+
+                double last = Interlocked.CompareExchange(ref _lastMainThreadTick, 0.0, 0.0);
+                double elapsed = _monotonicNow() - last;
+                return elapsed < 0 ? 0 : elapsed;
+            }
+        }
 
         /// <summary>
         /// State transitions. Public so that both the editor events and the EditMode tests drive the gate
@@ -183,6 +267,77 @@ namespace McpUnity.Unity
                 $"reload completes (bridge generation is {_generation} now; it increments once the reload is done).",
                 "domain_reloading");
             error["error"]["retryAfterMs"] = RetryAfterMs;
+            error["error"]["domainGeneration"] = _generation;
+            return true;
+        }
+
+        /// <summary>
+        /// Unity-specific (park, CMP-151 / INC-127): the main thread is alive — called from every
+        /// <see cref="Tick"/>, i.e. from EditorApplication.update.
+        /// </summary>
+        public void NoteMainThreadAlive()
+        {
+            Interlocked.Exchange(ref _lastMainThreadTick, _monotonicNow());
+            _mainThreadTickSeen = true;
+
+            if (_stallLogged)
+            {
+                _stallLogged = false;
+                McpLogger.LogInfo("Main thread is ticking again — bridge requests are accepted");
+            }
+        }
+
+        /// <summary>
+        /// Unity-specific (park, CMP-151 / INC-127): called from the socket handler right after
+        /// <see cref="TryRejectDuringReload"/>. Refuses a request that has nowhere to run: the main thread has
+        /// not ticked for <see cref="MainThreadStallSeconds"/>, so dispatching it would only reproduce the
+        /// INC-127 pattern — request logged, no answer, client waits out its 120s timeout and retries.
+        ///
+        /// Deliberately does NOT try to recognize the dialog: the missing ticks cover the whole class (modal
+        /// dialog, endless loop in an update handler, any other freeze), and a text detector would only cover
+        /// the one case someone happened to think of.
+        ///
+        /// Honest boundary: this does not unfreeze the editor (that is CMP-150). It turns a silent hang into a
+        /// diagnosis and stops the pointless retries.
+        /// </summary>
+        /// <returns>true when the request must be refused; <paramref name="error"/> holds the response</returns>
+        public bool TryRejectMainThreadBlocked(string method, out JObject error)
+        {
+            double stalled = SecondsSinceMainThreadTick;
+
+            // -1 (no tick seen yet) lands here too, on purpose: a gate that has never ticked knows nothing
+            // about the main thread, and refusing on ignorance would kill the bridge right after a domain
+            // reload — before the first EditorApplication.update of the new domain.
+            if (stalled < MainThreadStallSeconds)
+            {
+                error = null;
+                return false;
+            }
+
+            string[] inFlight = PendingMethods;
+            string culprit = inFlight.Length > 0
+                ? $" Bridge request(s) dispatched before the freeze and still in flight: {string.Join(", ", inFlight)} — " +
+                  "the freeze is most likely theirs (a modal dialog they opened, or a long synchronous operation)."
+                : string.Empty;
+
+            if (!_stallLogged)
+            {
+                _stallLogged = true;
+                McpLogger.LogError($"Main thread has not ticked for {stalled:F1}s — refusing bridge requests " +
+                                   $"('{method}' is the first one refused).{culprit}");
+            }
+
+            error = McpUnitySocketHandler.CreateErrorResponse(
+                $"Unity main thread has not ticked for {stalled:F1}s (threshold {MainThreadStallSeconds:F0}s): the editor " +
+                $"is frozen and '{method}' was NOT dispatched — nothing ran." + culprit +
+                " The usual cause in this project is a modal dialog on the main thread; confirm with " +
+                "`sample <unity-pid> 1` and look for `NSAlert runModal` (INC-127), the cause itself is fixed by " +
+                "CMP-150. Retrying will not help until the editor is unblocked: no tick, no response.",
+                "main_thread_blocked");
+            error["error"]["stalledSeconds"] = Math.Round(stalled, 1);
+            error["error"]["thresholdSeconds"] = MainThreadStallSeconds;
+            error["error"]["inFlightRequests"] = new JArray(inFlight);
+            error["error"]["retryAfterMs"] = MainThreadStallRetryAfterMs;
             error["error"]["domainGeneration"] = _generation;
             return true;
         }
@@ -268,6 +423,11 @@ namespace McpUnity.Unity
         /// </summary>
         public void Tick(bool editorIsCompiling, bool editorIsUpdating, double now)
         {
+            // Первым делом и до любых ранних выходов: сам факт вызова Tick — это и есть доказательство, что
+            // главный поток жив, и оно не должно зависеть от того, компилирует редактор или простаивает
+            // (CMP-151).
+            NoteMainThreadAlive();
+
             if (editorIsCompiling || editorIsUpdating)
             {
                 SetBusy(editorIsCompiling ? "compiling" : "importing assets", false);
