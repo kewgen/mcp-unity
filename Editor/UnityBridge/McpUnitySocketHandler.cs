@@ -348,7 +348,18 @@ namespace McpUnity.Unity
                 JObject jsonRpcResponse = CreateResponse(requestId, responseJson);
                 string responseStr = jsonRpcResponse.ToString(Formatting.None);
 
-                McpLogger.LogInfo($"WebSocket message response for request ID '{requestId}': {responseStr}");
+                // Unity-specific (парк, аудит логов 29.08.2026): в лог идёт СВОДКА, а не тело.
+                // Полный ответ run_tests — это ~18 КБ JSON с каждым тестом поимённо, и таких
+                // строк за ночное окно набралось 0.8 МБ — верх топа объёма после того, как
+                // остальной шум вычистили. Тело ответа при этом уже ушло клиенту, который его и
+                // разбирает; в логе от него нужен признак «что ответили и не пусто ли».
+                // Начало сохраняем: по нему видно success/сообщение, а на отладку целиком есть
+                // сам клиент и его вывод.
+                const int responseLogLimit = 300;
+                string responseSummary = responseStr.Length <= responseLogLimit
+                    ? responseStr
+                    : responseStr.Substring(0, responseLogLimit) + $"… (+{responseStr.Length - responseLogLimit} символов)";
+                McpLogger.LogInfo($"WebSocket message response for request ID '{requestId}': {responseSummary}");
 
                 // Send the response back to the client
                 Send(responseStr);
