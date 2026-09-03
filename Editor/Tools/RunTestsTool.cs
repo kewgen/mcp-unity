@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using McpUnity.Unity;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEditor;
 using UnityEditor.SceneManagement;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
@@ -49,6 +50,23 @@ namespace McpUnity.Tools
             }
 
             McpLogger.LogInfo($"Executing RunTestsTool: Mode={testMode}, Filter={testFilter ?? "(none)"}");
+
+            // Unity-specific (парк, 03.09): в Play Mode TestRunner EditMode-тесты не запускает,
+            // а мост молчал до клиентского таймаута — за 25.08–02.09 так набралось 66 отказов
+            // run_tests по 300 с каждый. Отказываем сразу и в том же формате, что занятый мост
+            // (McpUnityDomainReloadGate: type + retryAfterMs), чтобы вызывающий повторил, а не ждал.
+            if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                JObject playModeError = McpUnitySocketHandler.CreateErrorResponse(
+                    "Unity is in Play Mode: EditMode tests cannot start. The request was not executed — " +
+                    "exit Play Mode (play_mode_control action=exit) and retry.",
+                    "play_mode_active");
+                playModeError["error"]["retryAfterMs"] = McpUnityDomainReloadGate.RetryAfterMs;
+                McpLogger.LogWarning("RunTestsTool rejected: Editor is in Play Mode");
+                tcs.SetResult(playModeError);
+                return;
+            }
+
 
             // Unity-specific (парк, INC-052): грязная сцена на старте EditMode-тестов вызывает
             // модалку «Scene(s) Have Been Modified», которая блокирует TestRunner и MCP-мост.
