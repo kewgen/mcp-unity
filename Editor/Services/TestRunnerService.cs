@@ -25,6 +25,15 @@ namespace McpUnity.Services
         /// </summary>
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private TaskCompletionSource<JObject> _tcs;
+        /// <summary>
+        /// Unity-specific (парк, 03.09): прогон, брошенный по таймауту, продолжает жить в Unity —
+        /// его RunFinished приходит позже. Прежний код при таймауте не обнулял _tcs, поэтому
+        /// поздний колбэк резолвил TaskCompletionSource УЖЕ СЛЕДУЮЩЕГО клиента и перезаписывал
+        /// attraction-editmode.xml чужими результатами: 02.09 так прогон теста корпуса получил
+        /// ответ соседнего прогона и «падал» на несобранной чужой сборке. Флаг гасит ровно один
+        /// поздний RunFinished — тот, что относится к брошенному прогону.
+        /// </summary>
+        private bool _abandonedRunPending;
         private bool _returnOnlyFailures;
         private bool _returnWithLogs;
         private List<ITestResultAdaptor> _results;
@@ -84,6 +93,9 @@ namespace McpUnity.Services
                 var filter = new Filter { testMode = testMode };
 
                 _tcs = new TaskCompletionSource<JObject>();
+                // Новый прогон Unity не начнёт, пока не завершился предыдущий, поэтому к этому
+                // моменту поздний RunFinished брошенного прогона либо уже погашен, либо не придёт.
+                _abandonedRunPending = false;
                 _returnOnlyFailures = returnOnlyFailures;
                 _returnWithLogs = returnWithLogs;
 
@@ -186,6 +198,16 @@ namespace McpUnity.Services
         /// </summary>
         public void RunFinished(ITestResultAdaptor result)
         {
+            // Поздний колбэк брошенного по таймауту прогона: его результат никому не адресован,
+            // а гейт под него уже освобождён. Ни XML, ни TCS, ни Release — иначе он отдаст свои
+            // результаты следующему клиенту и лишний раз откроет семафор (park, 03.09).
+            if (_abandonedRunPending)
+            {
+                _abandonedRunPending = false;
+                McpLogger.LogWarning($"run_tests: late RunFinished from abandoned run ignored (result={result?.ResultState})");
+                return;
+            }
+
             // Пишем сводку в XML под preflight L2 (`run-render-parity-check.sh`); без файла gate считает MCP-артефакт отсутствующим.
             WriteAttractionParityGateXml(result);
 
@@ -266,6 +288,10 @@ namespace McpUnity.Services
                         "test_runner_timeout"));
                 // Иначе _runGate остаётся занятым до RunFinished; при зависшем Test Runner все следующие run_tests висят на WaitAsync без лога Executing.
                 McpLogger.LogWarning("run_tests: timeout — releasing gate so MCP queue can proceed (late RunFinished may follow)");
+                // Снимаем ссылку на брошенный TCS: иначе следующий клиент присвоит свой _tcs,
+                // а поздний RunFinished этого прогона резолвит ЕГО (park, 03.09).
+                if (ReferenceEquals(_tcs, pending)) _tcs = null;
+                _abandonedRunPending = true;
                 SafeReleaseRunGate();
             }
             return await pending.Task;
