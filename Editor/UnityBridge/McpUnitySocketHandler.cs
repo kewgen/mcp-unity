@@ -213,8 +213,12 @@ namespace McpUnity.Unity
             // Add the client to the server's tracking dictionary
             _server.Clients[ID] = clientName;
 
-            McpLogger.LogInfo($"WebSocket client connected (ID: {ID}, Name: {(string.IsNullOrEmpty(clientName) ? "Unknown" : clientName)}, Total clients: {_server.Clients.Count})");
+            McpLogger.LogInfoFor(clientName, $"WebSocket client connected (ID: {ID}, Name: {(string.IsNullOrEmpty(clientName) ? "Unknown" : clientName)}, Total clients: {_server.Clients.Count})");
         }
+
+        /// <summary>Имя клиента этого соединения (X-Client-Name) для префикса лога.</summary>
+        private string CurrentClientName
+            => _server.Clients.TryGetValue(ID, out string name) ? name : "";
 
         /// <summary>
         /// Handle WebSocket connection close
@@ -232,7 +236,7 @@ namespace McpUnity.Unity
                 reason = "connection closed by client";
             }
 
-            McpLogger.LogInfo($"WebSocket client '{clientName}' disconnected: {reason} (Remaining clients: {_server.Clients.Count})");
+            McpLogger.LogInfoFor(clientName, $"WebSocket client '{clientName}' disconnected: {reason} (Remaining clients: {_server.Clients.Count})");
         }
 
         /// <summary>
@@ -257,7 +261,7 @@ namespace McpUnity.Unity
                     return;
                 }
 
-                McpLogger.LogInfo($"WebSocket message received: {data}");
+                McpLogger.LogInfoFor(CurrentClientName, $"WebSocket message received: {data}");
                 JObject requestJson;
                 try
                 {
@@ -359,7 +363,7 @@ namespace McpUnity.Unity
                 string responseSummary = responseStr.Length <= responseLogLimit
                     ? responseStr
                     : responseStr.Substring(0, responseLogLimit) + $"… (+{responseStr.Length - responseLogLimit} символов)";
-                McpLogger.LogInfo($"WebSocket message response for request ID '{requestId}': {responseSummary}");
+                McpLogger.LogInfoFor(CurrentClientName, $"WebSocket message response for request ID '{requestId}': {responseSummary}");
 
                 // Send the response back to the client
                 Send(responseStr);
