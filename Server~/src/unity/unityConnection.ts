@@ -2,7 +2,7 @@ import WebSocket from 'ws';
 import { EventEmitter } from 'events';
 import { Logger } from '../utils/logger.js';
 import { McpUnityError, ErrorType } from '../utils/errors.js';
-import { agentName } from '../utils/agentName.js';
+import { agentName, headerSafeName } from '../utils/agentName.js';
 
 /**
  * Connection states for the Unity WebSocket connection
@@ -217,7 +217,7 @@ export class UnityConnection extends EventEmitter {
       // подхватывается после переподключения (domain reload). Иначе — имя MCP-клиента.
       const options: WebSocket.ClientOptions = {
         headers: {
-          'X-Client-Name': agentName() || this.config.clientName || ''
+          'X-Client-Name': headerSafeName(agentName() || this.config.clientName || '')
         }
       };
 

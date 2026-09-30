@@ -2,6 +2,28 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+// HTTP-заголовок — ByteString (latin1): кириллическое имя вкладки («Дорожка») роняет
+// подключение ещё до рукопожатия («Invalid character in header content»), и сессия теряет
+// Unity целиком. Имя в заголовке — транслитом, неизвестный символ — «?». Та же функция —
+// в park scripts/mcp-unity-call.mjs (headerSafeName).
+const CYRILLIC: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k',
+  л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts',
+  ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+export function headerSafeName(name: string): string {
+  let out = '';
+  for (const ch of name) {
+    if (ch >= ' ' && ch <= '~') { out += ch; continue; }
+    const lower = ch.toLowerCase();
+    const mapped = CYRILLIC[lower];
+    if (mapped === undefined) { out += '?'; continue; }
+    out += ch !== lower && mapped ? mapped[0].toUpperCase() + mapped.slice(1) : mapped;
+  }
+  return out;
+}
+
 /**
  * Имя агента для заголовка X-Client-Name: Unity пишет его в лог вместо «Unknown MCP Client»,
  * и видно, какая из параллельных сессий шлёт запрос.

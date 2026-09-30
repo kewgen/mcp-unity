@@ -245,7 +245,7 @@ Each MCP client is identified in Unity logs by name. Set `MCP_CLIENT_NAME` in `.
   }
 }
 ```
-Priority: MCP SDK `clientInfo.name` → `MCP_CLIENT_NAME` env var → `"Unknown MCP Client"`.
+Priority (Server~/src/utils/agentName.ts, на каждое подключение): `MCP_CLIENT_NAME` → имя вкладки Claude Code из `~/.claude/sessions` по `CLAUDE_CODE_SESSION_ID` → `AGENT_ID` → MCP SDK `clientInfo.name` → `"Unknown MCP Client"`. В заголовок имя идёт транслитом (`headerSafeName`): кириллица в HTTP-заголовке роняет подключение.
 When running multiple agents, give each a unique name to trace which agent issued which command in Unity console.
 
 **What works in parallel:**
