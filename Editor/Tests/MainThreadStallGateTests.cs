@@ -119,6 +119,50 @@ namespace McpUnity.Tests
         }
 
         [Test]
+        public void ModalRequestInFlight_StallStaysAnError()
+        {
+            // INC-127 остаётся громкой: модалку открывает сам запрос моста, поэтому «в полёте что-то есть» —
+            // как раз та заморозка, ради которой Error заводился. Понижение до Warning — только для run_tests.
+            _gate.Register("execute_menu_item", _ => { });
+            MainThreadTick();
+            _now += McpUnityDomainReloadGate.MainThreadStallSeconds + 1;
+
+            ExpectStallLogged();
+            Assert.IsTrue(_gate.TryRejectMainThreadBlocked("get_console_logs", out _));
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void RunTestsInFlight_StallIsWarningNotError()
+        {
+            // INC-328: полный EditMode run_tests держит главный поток синхронно — это занятость гейта, а не
+            // заморозка. Отказ чужому probe остаётся, но в консоль идёт Warning: незаявленный Error NUnit
+            // засчитал бы идущему тесту (02.10: UIINT014 и красный гейт от --check-only соседа).
+            _gate.Register("run_tests", _ => { });
+            MainThreadTick();
+            _now += McpUnityDomainReloadGate.MainThreadStallSeconds + 1;
+
+            LogAssert.Expect(LogType.Warning, new Regex(@"Main thread has not ticked for .+refusing bridge requests"));
+            Assert.IsTrue(_gate.TryRejectMainThreadBlocked("get_console_logs", out JObject error),
+                "отказ клиенту остаётся: запрос всё равно некуда выполнить");
+            Assert.AreEqual("main_thread_blocked", error["error"]["type"].ToString());
+            LogAssert.NoUnexpectedReceived();
+        }
+
+        [Test]
+        public void RunTestsInFlight_RefusalDoesNotFailTheRunningTest()
+        {
+            // Тот же сценарий глазами идущего теста: он о мосте ничего не знает и LogAssert.Expect не ставит.
+            // Отказ соседу не должен сделать его красным — ровно так упал UIINT014.
+            _gate.Register("run_tests", _ => { });
+            _gate.Register("get_console_logs", _ => { });
+            MainThreadTick();
+            _now += McpUnityDomainReloadGate.MainThreadStallSeconds + 1;
+
+            Assert.IsTrue(_gate.TryRejectMainThreadBlocked("get_console_logs", out _));
+        }
+
+        [Test]
         public void TickResumed_StopsRejecting()
         {
             MainThreadTick();

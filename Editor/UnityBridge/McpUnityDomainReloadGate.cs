@@ -74,6 +74,23 @@ namespace McpUnity.Unity
         public const int MainThreadStallRetryAfterMs = 30000;
 
         /// <summary>
+        /// Unity-specific (park, INC-328): the one in-flight method that legitimately keeps the main thread busy
+        /// for minutes. A full EditMode <c>run_tests</c> runs synchronously between update ticks, so a stall with it
+        /// in flight is the gate working, not a freeze. Same rule as <c>scripts/unity-editor-restart.sh</c>
+        /// («inFlightRequests содержит run_tests — допустимая долгая синхронная операция»).
+        /// </summary>
+        public const string LongSyncOperationMethod = "run_tests";
+
+        /// <summary>
+        /// Unity-specific (park, INC-328): true when the stall is explained by a running test pass. The refusal
+        /// is then logged as a Warning: NUnit fails whichever test is running on an unexpected Error, so an Error
+        /// here turned a neighbour's status probe into a red gate. Any other in-flight method (a modal opened by
+        /// <c>execute_menu_item</c> — INC-127) or none at all still logs an Error.
+        /// </summary>
+        public static bool IsLongSyncOperationInFlight(string[] inFlight) =>
+            inFlight != null && Array.IndexOf(inFlight, LongSyncOperationMethod) >= 0;
+
+        /// <summary>
         /// Wall clock readable from any thread. <see cref="EditorApplication.timeSinceStartup"/> — the clock the
         /// gate ticks with — is main-thread only, and the freeze has to be detected from the socket receive
         /// thread, which is the whole point.
@@ -323,8 +340,16 @@ namespace McpUnity.Unity
             if (!_stallLogged)
             {
                 _stallLogged = true;
-                McpLogger.LogError($"Main thread has not ticked for {stalled:F1}s — refusing bridge requests " +
-                                   $"('{method}' is the first one refused).{culprit}");
+                string stallMessage = $"Main thread has not ticked for {stalled:F1}s — refusing bridge requests " +
+                                      $"('{method}' is the first one refused).{culprit}";
+                if (IsLongSyncOperationInFlight(inFlight))
+                {
+                    McpLogger.LogWarning(stallMessage);
+                }
+                else
+                {
+                    McpLogger.LogError(stallMessage);
+                }
             }
 
             error = McpUnitySocketHandler.CreateErrorResponse(
